@@ -441,6 +441,7 @@ in
         home.packages = [ cfg.package ];
 
         programs.${pname} = {
+          shellAliases = lib.mkDefault config.home.shellAliases;
           initExtra = lib.mkIf (cfg.logoutExtra != "") (
             lib.mkAfter ''
               trap ". $HOME/.${pname}_logout" EXIT
