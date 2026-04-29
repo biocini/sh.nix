@@ -460,7 +460,7 @@ in
         '';
 
         home.file.${homeRcPath}.text = ''
-          # ~/.${homeRcPath}: DO NOT EDIT -- this file has been generated automatically.
+          # ~/${homeRcPath}: DO NOT EDIT -- this file has been generated automatically.
 
           # Only execute this file once per shell.
           if [ -n "$__HOME_${PNAME}RC_SOURCED" ]; then return; fi
