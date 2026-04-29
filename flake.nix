@@ -13,7 +13,12 @@
       flake-utils,
     }:
     let
-      ksh93Module = import ./modules/ksh93.nix;
+      kshBase = self.lib.mkPosixShellModule {
+        name = "ksh";
+        etcRcPath = "kshrc";
+        homeRcPath = ".kshrc";
+      };
+      ksh93Extra = import ./modules/ksh93.nix;
     in
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -36,8 +41,25 @@
         ksh-nightly = final.callPackage ./pkgs/ksh93/nightly.nix { };
       };
 
-      nixosModules.ksh = ksh93Module { shnixLib = self.lib; };
-      darwinModules.ksh = ksh93Module { shnixLib = self.lib; };
-      homeManagerModules.ksh = ksh93Module { shnixLib = self.lib; };
+      nixosModules.ksh = {
+        imports = [
+          kshBase.nixosModule
+          ksh93Extra
+        ];
+      };
+
+      darwinModules.ksh = {
+        imports = [
+          kshBase.darwinModule
+          ksh93Extra
+        ];
+      };
+
+      homeManagerModules.ksh = {
+        imports = [
+          kshBase.homeManagerModule
+          ksh93Extra
+        ];
+      };
     };
 }

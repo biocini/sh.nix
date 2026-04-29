@@ -1,30 +1,14 @@
-# KornShell 93 (ksh93u+m) module — layers ksh-specific options on top of
-# sh.nix's POSIX shell base.
+# KornShell 93 (ksh93u+m) — ksh-specific options and config layered on top
+# of the POSIX shell base.  Import this alongside the platform-specific base
+# module (nixosModule / darwinModule / homeManagerModule).
 
-{ shnixLib }:
-
-let
-  base = shnixLib.mkPosixShellModule {
-    name = "ksh";
-    etcRcPath = "kshrc";
-    homeRcPath = ".kshrc";
-  };
-in
-
-{
-  config,
-  lib,
-  pkgs,
-  ...
-}:
+{ config, lib, ... }:
 
 let
   cfg = config.programs.ksh;
 in
 
 {
-  imports = [ base ];
-
   options.programs.ksh = {
     shellOptions = lib.mkOption {
       type = with lib.types; listOf str;
