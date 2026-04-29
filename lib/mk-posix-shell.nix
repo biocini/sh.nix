@@ -119,14 +119,43 @@ in
           internal = true;
           visible = false;
         };
+
+        _nixosModuleLoaded = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          internal = true;
+          visible = false;
+        };
+
+        _darwinModuleLoaded = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          internal = true;
+          visible = false;
+        };
+
+        _homeManagerModuleLoaded = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          internal = true;
+          visible = false;
+        };
       };
 
       config = lib.mkIf cfg.enable {
+        assertions = [
+          {
+            assertion = !cfg._darwinModuleLoaded;
+            message = "programs.${pname}: nixosModule cannot be used together with darwinModule";
+          }
+        ];
+
         environment.systemPackages = [ cfg.package ];
 
         environment.variables.ENV = lib.mkDefault "/etc/${etcRcPath}";
 
         programs.${pname} = {
+          _nixosModuleLoaded = true;
           shellInit = ''
             if [ -z "$__NIXOS_SET_ENVIRONMENT_DONE" ]; then
               . ${config.system.build.setEnvironment}
@@ -265,15 +294,44 @@ in
           internal = true;
           visible = false;
         };
+
+        _nixosModuleLoaded = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          internal = true;
+          visible = false;
+        };
+
+        _darwinModuleLoaded = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          internal = true;
+          visible = false;
+        };
+
+        _homeManagerModuleLoaded = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          internal = true;
+          visible = false;
+        };
       };
 
       config = lib.mkIf cfg.enable {
+        assertions = [
+          {
+            assertion = !cfg._nixosModuleLoaded;
+            message = "programs.${pname}: darwinModule cannot be used together with nixosModule";
+          }
+        ];
+
         environment.systemPackages = [ cfg.package ];
 
         environment.variables.ENV = lib.mkDefault "/etc/${etcRcPath}";
         environment.variables.LANG = lib.mkDefault "C.UTF-8";
 
         programs.${pname} = {
+          _darwinModuleLoaded = true;
           shellInit = ''
             if [ -z "$__NIX_DARWIN_SET_ENVIRONMENT_DONE" ]; then
               . ${config.system.build.setEnvironment}
@@ -435,12 +493,34 @@ in
             file and wires it into the interactive init via a trap.
           '';
         };
+
+        _nixosModuleLoaded = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          internal = true;
+          visible = false;
+        };
+
+        _darwinModuleLoaded = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          internal = true;
+          visible = false;
+        };
+
+        _homeManagerModuleLoaded = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          internal = true;
+          visible = false;
+        };
       };
 
       config = lib.mkIf cfg.enable {
         home.packages = [ cfg.package ];
 
         programs.${pname} = {
+          _homeManagerModuleLoaded = true;
           shellAliases = lib.mkDefault config.home.shellAliases;
           initExtra = lib.mkIf (cfg.logoutExtra != "") (
             lib.mkAfter ''
