@@ -1,8 +1,8 @@
-name: update-nightly
+name: update-ksh93-nightly
 
 on:
   schedule:
-    - cron: '0 6 * * *'
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 jobs:
@@ -19,9 +19,17 @@ jobs:
           extra_nix_config: |
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
 
+      - name: get current nightly rev
+        id: current
+        run: |
+          set -euo pipefail
+          rev=$(grep -oP 'rev = "\K[^"]+' pkgs/ksh93/nightly.nix)
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+
       - name: fetch latest dev commit info
         id: dev
         run: |
+          set -euo pipefail
           commit_json=$(curl -fsSL https://api.github.com/repos/ksh93/ksh/commits/dev)
           sha=$(echo "$commit_json" | jq -r '.sha')
           date=$(echo "$commit_json" | jq -r '.commit.committer.date' | cut -dT -f1)
@@ -29,24 +37,32 @@ jobs:
           echo "date=$date" >> "$GITHUB_OUTPUT"
 
       - name: prefetch latest dev
+        if: steps.dev.outputs.sha != steps.current.outputs.rev
         id: prefetch
         run: |
-          hash=$(nix-prefetch-git --url https://github.com/ksh93/ksh --rev "${{ steps.dev.outputs.sha }}" | jq -r '.hash')
+          set -euo pipefail
+          hash=$(nix-prefetch-git --url https://github.com/ksh93/ksh --rev "${{ steps.dev.outputs.sha }}" | jq -r '.hash // .sha256')
+          [[ "$hash" =~ ^sha256-[A-Za-z0-9+/=]+$ ]] || { echo "ERROR: bad hash '$hash'"; exit 1; }
           echo "hash=$hash" >> "$GITHUB_OUTPUT"
 
-      - name: update nightly version and hash
+      - name: update nightly version, rev, and hash
+        if: steps.dev.outputs.sha != steps.current.outputs.rev
         run: |
-          sed -i 's|version = "[^"]*";|version = "unstable-${{ steps.dev.outputs.date }}";|' packages/nightly.nix
-          sed -i 's|hash = "[^"]*";|hash = "${{ steps.prefetch.outputs.hash }}";|' packages/nightly.nix
+          set -euo pipefail
+          sed -i 's|version = "[^"]*";|version = "unstable-${{ steps.dev.outputs.date }}";|' pkgs/ksh93/nightly.nix
+          sed -i 's|rev = "[^"]*";|rev = "${{ steps.dev.outputs.sha }}";|' pkgs/ksh93/nightly.nix
+          sed -i 's|hash = "[^"]*";|hash = "${{ steps.prefetch.outputs.hash }}";|' pkgs/ksh93/nightly.nix
 
       - name: commit if changed
+        if: steps.dev.outputs.sha != steps.current.outputs.rev
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if git diff --quiet; then
             echo "No changes."
             exit 0
           fi
-          git add packages/nightly.nix
+          git add pkgs/ksh93/nightly.nix
           git commit -m "ksh-nightly: update to unstable-${{ steps.dev.outputs.date }} (${{ steps.prefetch.outputs.hash }})"
           git push

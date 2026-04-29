@@ -1,8 +1,8 @@
-name: update-stable
+name: update-ksh93-stable
 
 on:
   schedule:
-    - cron: '0 7 * * *'
+    - cron: "0 7 * * *"
   workflow_dispatch:
 
 jobs:
@@ -22,7 +22,8 @@ jobs:
       - name: fetch latest stable release
         id: release
         run: |
-          tag=$(curl -s https://api.github.com/repos/ksh93/ksh/releases/latest | jq -r '.tag_name')
+          set -euo pipefail
+          tag=$(curl -fsSL https://api.github.com/repos/ksh93/ksh/releases/latest | jq -r '.tag_name')
           version="${tag#v}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -30,23 +31,27 @@ jobs:
       - name: get current stable version
         id: current
         run: |
-          version=$(grep -oP 'version = "\K[^"]+' packages/stable.nix)
+          set -euo pipefail
+          version=$(grep -oP 'version = "\K[^"]+' pkgs/ksh93/stable.nix)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: prefetch and update stable
         if: steps.release.outputs.version != steps.current.outputs.version
         id: prefetch
         run: |
-          hash=$(nix-prefetch-git --url https://github.com/ksh93/ksh --rev "${{ steps.release.outputs.tag }}" | jq -r '.hash')
-          sed -i "s|version = \"[^\"]*\";|version = \"${{ steps.release.outputs.version }}\";|" packages/stable.nix
-          sed -i "s|hash = \"sha256-[^\"]*\";|hash = \"$hash\";|" packages/stable.nix
+          set -euo pipefail
+          hash=$(nix-prefetch-git --url https://github.com/ksh93/ksh --rev "${{ steps.release.outputs.tag }}" | jq -r '.hash // .sha256')
+          [[ "$hash" =~ ^sha256-[A-Za-z0-9+/=]+$ ]] || { echo "ERROR: bad hash '$hash'"; exit 1; }
+          sed -i "s|version = \"[^\"]*\";|version = \"${{ steps.release.outputs.version }}\";|" pkgs/ksh93/stable.nix
+          sed -i "s|hash = \"[^\"]*\";|hash = \"$hash\";|" pkgs/ksh93/stable.nix
           echo "hash=$hash" >> "$GITHUB_OUTPUT"
 
       - name: commit if changed
         if: steps.release.outputs.version != steps.current.outputs.version
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add packages/stable.nix
+          git add pkgs/ksh93/stable.nix
           git commit -m "ksh-stable: update to ${{ steps.release.outputs.version }} (${{ steps.prefetch.outputs.hash }})"
           git push
