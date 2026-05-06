@@ -2,14 +2,10 @@
 
 ## Testing
 
-Run the nix-unit test suite before submitting changes:
+The sole means of testing this flake during development is through the `nix flake` interface:
 
 ```bash
-nix eval --impure --expr '
-  let flake = builtins.getFlake "'$(pwd)'";
-  in map (n: { name = n; pass = flake.tests."${n}".expr == flake.tests."${n}".expected; })
-       (builtins.attrNames flake.tests)
-'
+nix flake check
 ```
 
 All tests live in `tests/default.nix`. Add tests for:
@@ -40,7 +36,7 @@ Do **not** inline `mkPosixShellModule` in `flake.nix` — the returned functions
 
 ## CI Workflows
 
-`.github/workflows/update-ksh93-*.yml` run daily and commit directly to master.
+`.github/workflows/update-ksh93-*.yml` and `.github/workflows/update-rc-nightly.yml` run daily and commit directly to master.
 
 - They use `set -euo pipefail` and hash validation (`[[ "$hash" =~ ^sha256-[A-Za-z0-9+/=]+$ ]]`)
 - Nightly pins to commit SHA (not mutable `dev` ref) with a change guard
