@@ -40,7 +40,7 @@ jobs:
         id: prefetch
         run: |
           set -euo pipefail
-          hash=$(nix-prefetch-git --url https://github.com/ksh93/ksh --rev "${{ steps.release.outputs.tag }}" | jq -r '.hash // .sha256')
+          hash=$(nix run nixpkgs#nix-prefetch-git -- --url https://github.com/ksh93/ksh --rev "${{ steps.release.outputs.tag }}" | jq -r '.hash // .sha256')
           [[ "$hash" =~ ^sha256-[A-Za-z0-9+/=]+$ ]] || { echo "ERROR: bad hash '$hash'"; exit 1; }
           sed -i "s|version = \"[^\"]*\";|version = \"${{ steps.release.outputs.version }}\";|" pkgs/ksh93/stable.nix
           sed -i "s|hash = \"[^\"]*\";|hash = \"$hash\";|" pkgs/ksh93/stable.nix
