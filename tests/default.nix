@@ -56,12 +56,22 @@ in
     expected = true;
   };
 
-  "overlay exposes ksh and ksh-nightly" = {
+  "overlay exposes ksh, ksh-nightly, and rc-nightly" = {
     expr = builtins.attrNames (self.overlays.default pkgs pkgs);
     expected = [
       "ksh"
       "ksh-nightly"
+      "rc-nightly"
     ];
+  };
+
+  "rc-nightly overrides rc version" = {
+    expr =
+      let
+        overlayed = self.overlays.default pkgs pkgs;
+      in
+      overlayed.rc-nightly.version;
+    expected = "unstable-2026-04-24";
   };
 
   "nixos module produces /etc/kshrc" = {
