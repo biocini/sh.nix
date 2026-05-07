@@ -30,9 +30,7 @@
         packages = {
           ksh = pkgs.callPackage ./pkgs/ksh93/stable.nix { };
           ksh-nightly = pkgs.callPackage ./pkgs/ksh93/nightly.nix { };
-          rc-nightly = pkgs.rc.overrideAttrs (
-            import ./pkgs/rc/nightly.nix { inherit (pkgs) fetchFromGitHub; }
-          );
+          rc = pkgs.callPackage ./pkgs/rc/default.nix { };
           default = self.packages.${system}.ksh;
         };
       }
@@ -43,9 +41,7 @@
       overlays.default = final: prev: {
         ksh = final.callPackage ./pkgs/ksh93/stable.nix { };
         ksh-nightly = final.callPackage ./pkgs/ksh93/nightly.nix { };
-        rc-nightly = prev.rc.overrideAttrs (
-          import ./pkgs/rc/nightly.nix { inherit (final) fetchFromGitHub; }
-        );
+        rc = final.callPackage ./pkgs/rc/default.nix { };
       };
 
       nixosModules.ksh =

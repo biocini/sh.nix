@@ -1,0 +1,71 @@
+Add system-wide /etc/rcrc support and RCRC environment variable override.
+
+This patch extends rc's login shell initialization to support:
+- $RCRC environment variable: if set, source only that file
+- /etc/rcrc: sourced before ~/.rcrc for system-wide configuration
+- ~/.rcrc: still sourced as before (after /etc/rcrc)
+
+This enables NixOS/nix-darwin integration where system-wide shell
+configuration can be managed declaratively.
+
+--- a/main.c	2026-05-07 01:22:18.340948863 -0700
++++ b/main.c	2026-05-07 01:38:30.621443254 -0700
+@@ -104,21 +104,46 @@
+ 	if (dashell) {
+ 		char *rcrc;
+ 		int fd;
++		char *rcrc_env;
++		bool push_interactive;
+ 
+-		rcrc = concat(varlookup("home"), word("/.rcrc", NULL))->w;
+-		fd = rc_open(rcrc, rFrom);
+-		if (fd == -1) {
+-			if (errno != ENOENT)
+-				uerror(rcrc);
++		rcrc_env = getenv("RCRC");
++		if (rcrc_env != NULL) {
++			fd = rc_open(rcrc_env, rFrom);
++			if (fd >= 0) {
++				pushfd(fd);
++				push_interactive = interactive;
++				interactive = FALSE;
++				doit(TRUE);
++				interactive = push_interactive;
++				close(fd);
++			} else if (errno != ENOENT) {
++				uerror(rcrc_env);
++			}
+ 		} else {
+-			bool push_interactive;
++			/* source system-wide rcrc before user rcrc */
++			fd = rc_open("/etc/rcrc", rFrom);
++			if (fd >= 0) {
++				pushfd(fd);
++				push_interactive = interactive;
++				interactive = FALSE;
++				doit(TRUE);
++				interactive = push_interactive;
++				close(fd);
++			}
+ 
+-			pushfd(fd);
+-			push_interactive = interactive;
+-			interactive = FALSE;
+-			doit(TRUE);
+-			interactive = push_interactive;
+-			close(fd);
++			rcrc = concat(varlookup("home"), word("/.rcrc", NULL))->w;
++			fd = rc_open(rcrc, rFrom);
++			if (fd >= 0) {
++				pushfd(fd);
++				push_interactive = interactive;
++				interactive = FALSE;
++				doit(TRUE);
++				interactive = push_interactive;
++				close(fd);
++			} else if (errno != ENOENT) {
++				uerror(rcrc);
++			}
+ 		}
+ 	}
+ 	environ = makeenv();

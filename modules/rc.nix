@@ -34,6 +34,48 @@ shnixLib.mkShellModule {
       };
     };
 
+  nixosFiles = {
+    "rcrc" = {
+      content =
+        { lib, cfg, ... }:
+        ''
+          # /etc/rcrc: DO NOT EDIT -- this file has been generated automatically.
+
+          # History file.
+          history=${lib.escapeShellArg cfg.historyFile}
+
+          # Prompt.
+          prompt=(${lib.concatMapStringsSep " " lib.escapeShellArg cfg.prompt})
+
+          # Functions (rc's equivalent of aliases).
+          ${lib.concatStringsSep "\n" (lib.mapAttrsToList (k: v: "fn ${k} { ${v} }") cfg.shellAliases)}
+
+          ${cfg.initExtra}
+        '';
+    };
+  };
+
+  darwinFiles = {
+    "rcrc" = {
+      content =
+        { lib, cfg, ... }:
+        ''
+          # /etc/rcrc: DO NOT EDIT -- this file has been generated automatically.
+
+          # History file.
+          history=${lib.escapeShellArg cfg.historyFile}
+
+          # Prompt.
+          prompt=(${lib.concatMapStringsSep " " lib.escapeShellArg cfg.prompt})
+
+          # Functions (rc's equivalent of aliases).
+          ${lib.concatStringsSep "\n" (lib.mapAttrsToList (k: v: "fn ${k} { ${v} }") cfg.shellAliases)}
+
+          ${cfg.initExtra}
+        '';
+    };
+  };
+
   hmFiles = {
     ".rcrc" = {
       content =

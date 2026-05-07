@@ -65,5 +65,5 @@ jobs:
             exit 0
           fi
           git add pkgs/rc/nightly.nix
-          git commit -m "rc-nightly: update to unstable-${{ steps.master.outputs.date }} (${{ steps.prefetch.outputs.hash }})"
+          git commit -m "rc: update to unstable-${{ steps.master.outputs.date }} (${{ steps.prefetch.outputs.hash }})"
           git push

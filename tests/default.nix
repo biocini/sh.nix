@@ -56,21 +56,21 @@ in
     expected = true;
   };
 
-  "overlay exposes ksh, ksh-nightly, and rc-nightly" = {
+  "overlay exposes ksh, ksh-nightly, and rc" = {
     expr = builtins.attrNames (self.overlays.default pkgs pkgs);
     expected = [
       "ksh"
       "ksh-nightly"
-      "rc-nightly"
+      "rc"
     ];
   };
 
-  "rc-nightly overrides rc version" = {
+  "rc overlay uses nightly version" = {
     expr =
       let
         overlayed = self.overlays.default pkgs pkgs;
       in
-      overlayed.rc-nightly.version;
+      overlayed.rc.version;
     expected = "unstable-2026-04-24";
   };
 
@@ -285,6 +285,34 @@ in
           ]).config;
       in
       lib.elem pkgs.rc cfg.environment.systemPackages;
+    expected = true;
+  };
+
+  "rc nixos module produces /etc/rcrc" = {
+    expr =
+      let
+        cfg =
+          (evalNixos [
+            stubs.nixos
+            self.nixosModules.rc
+            { programs.rc.enable = true; }
+          ]).config;
+      in
+      builtins.hasAttr "rcrc" cfg.environment.etc;
+    expected = true;
+  };
+
+  "rc darwin module produces /etc/rcrc" = {
+    expr =
+      let
+        cfg =
+          (evalDarwin [
+            stubs.nixos
+            self.darwinModules.rc
+            { programs.rc.enable = true; }
+          ]).config;
+      in
+      builtins.hasAttr "rcrc" cfg.environment.etc;
     expected = true;
   };
 
