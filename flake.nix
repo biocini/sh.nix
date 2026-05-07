@@ -18,6 +18,7 @@
     let
       kshBase = import ./modules/ksh-base.nix { shnixLib = self.lib; };
       ksh93Extra = import ./modules/ksh93.nix;
+      rcModule = import ./modules/rc.nix { shnixLib = self.lib; };
       forAllSystems = nixpkgs.lib.genAttrs flake-utils.lib.defaultSystems;
     in
     flake-utils.lib.eachDefaultSystem (
@@ -73,6 +74,10 @@
             ksh93Extra
           ];
         };
+
+      nixosModules.rc = rcModule.nixosModule;
+      darwinModules.rc = rcModule.darwinModule;
+      homeManagerModules.rc = rcModule.homeManagerModule;
 
       tests = import ./tests { inherit self nixpkgs; };
 

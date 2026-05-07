@@ -20,7 +20,6 @@
 }:
 
 let
-  pname = name;
   mkPs1Line =
     lib:
     "PS1="
@@ -45,129 +44,175 @@ let
     );
 in
 
-{
-  nixosModule =
+import ./mk-shell-module.nix {
+  inherit name;
+
+  extraOptions =
+    { lib, ... }:
+    {
+      histFile = lib.mkOption {
+        type = lib.types.str;
+        default = "$HOME/.${name}_history";
+        description = "Path to the history file. Evaluated at shell runtime.";
+      };
+
+      histSize = lib.mkOption {
+        type = lib.types.int;
+        default = 2000;
+        description = "Number of history lines to keep in memory.";
+      };
+
+      shellAliases = lib.mkOption {
+        type = lib.types.attrsOf lib.types.str;
+        default = { };
+        description = "Aliases to define in interactive shells.";
+      };
+
+      initExtra = lib.mkOption {
+        type = lib.types.lines;
+        default = "";
+        description = "Additional commands for interactive shell init.";
+      };
+
+      shellInit = lib.mkOption {
+        type = lib.types.lines;
+        default = "";
+        internal = true;
+        visible = false;
+      };
+
+      loginShellInit = lib.mkOption {
+        type = lib.types.lines;
+        default = "";
+        internal = true;
+        visible = false;
+      };
+
+      interactiveShellInit = lib.mkOption {
+        type = lib.types.lines;
+        default = "";
+        internal = true;
+        visible = false;
+      };
+    };
+
+  extraHmOptions =
+    { lib, ... }:
+    {
+      profileExtra = lib.mkOption {
+        type = lib.types.lines;
+        default = "";
+        description = "Additional commands for login shell init.";
+      };
+
+      sessionVariables = lib.mkOption {
+        type = lib.types.attrsOf (
+          lib.types.oneOf [
+            lib.types.str
+            lib.types.int
+            lib.types.path
+          ]
+        );
+        default = { };
+        description = "Environment variables to export at login.";
+      };
+
+      logoutExtra = lib.mkOption {
+        type = lib.types.lines;
+        default = "";
+        description = ''
+          Commands to run on shell exit. When non-empty, generates a logout
+          file and wires it into the interactive init via a trap.
+        '';
+      };
+    };
+
+  nixosConfig =
     {
       config,
       lib,
       pkgs,
-      ...
+      cfg,
     }:
-    let
-      PNAME = lib.strings.toUpper pname;
-      cfg = config.programs.${pname};
-
-      aliasesStr = lib.concatStringsSep "\n" (
-        lib.mapAttrsToList (k: v: "alias ${k}=${lib.escapeShellArg v}") cfg.shellAliases
-      );
-
-      ps1Line = mkPs1Line lib;
-    in
     {
-      options.programs.${pname} = {
-        enable = lib.mkEnableOption "${pname} shell";
-
-        package = lib.mkOption {
-          type = lib.types.package;
-          default = pkgs.${pname};
-          defaultText = lib.literalExpression "pkgs.${pname}";
-          description = "The ${pname} package to use.";
-        };
-
-        histFile = lib.mkOption {
-          type = lib.types.str;
-          default = "$HOME/.${pname}_history";
-          description = "Path to the history file. Evaluated at shell runtime.";
-        };
-
-        histSize = lib.mkOption {
-          type = lib.types.int;
-          default = 2000;
-          description = "Number of history lines to keep in memory.";
-        };
-
-        shellAliases = lib.mkOption {
-          type = lib.types.attrsOf lib.types.str;
-          default = { };
-          description = "Aliases to define in interactive shells.";
-        };
-
-        initExtra = lib.mkOption {
-          type = lib.types.lines;
-          default = "";
-          description = "Additional commands for interactive shell init.";
-        };
-
-        # internally assembled — do not set manually
-        shellInit = lib.mkOption {
-          type = lib.types.lines;
-          default = "";
-          internal = true;
-          visible = false;
-        };
-
-        loginShellInit = lib.mkOption {
-          type = lib.types.lines;
-          default = "";
-          internal = true;
-          visible = false;
-        };
-
-        interactiveShellInit = lib.mkOption {
-          type = lib.types.lines;
-          default = "";
-          internal = true;
-          visible = false;
-        };
-
-        _nixosModuleLoaded = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          internal = true;
-          visible = false;
-        };
-
-        _darwinModuleLoaded = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          internal = true;
-          visible = false;
-        };
-
-        _homeManagerModuleLoaded = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          internal = true;
-          visible = false;
-        };
+      environment.variables.ENV = lib.mkDefault "/etc/${etcRcPath}";
+      programs.${name} = {
+        shellInit = ''
+          if [ -z "$__NIXOS_SET_ENVIRONMENT_DONE" ]; then
+            . ${config.system.build.setEnvironment}
+          fi
+          ${config.environment.shellInit}
+        '';
+        loginShellInit = config.environment.loginShellInit;
+        interactiveShellInit = config.environment.interactiveShellInit;
+        shellAliases = lib.mkDefault config.environment.shellAliases;
       };
+    };
 
-      config = lib.mkIf cfg.enable {
-        assertions = [
-          {
-            assertion = !cfg._darwinModuleLoaded;
-            message = "programs.${pname}: nixosModule cannot be used together with darwinModule";
-          }
-        ];
+  darwinConfig =
+    {
+      config,
+      lib,
+      pkgs,
+      cfg,
+    }:
+    {
+      environment.variables.ENV = lib.mkDefault "/etc/${etcRcPath}";
+      environment.variables.LANG = lib.mkDefault "C.UTF-8";
+      programs.${name} = {
+        shellInit = ''
+          if [ -z "$__NIX_DARWIN_SET_ENVIRONMENT_DONE" ]; then
+            . ${config.system.build.setEnvironment}
+          fi
+          ${config.environment.shellInit}
+        '';
+        loginShellInit = config.environment.loginShellInit;
+        interactiveShellInit = config.environment.interactiveShellInit;
+      };
+    };
 
-        environment.systemPackages = [ cfg.package ];
+  hmConfig =
+    {
+      config,
+      lib,
+      pkgs,
+      cfg,
+    }:
+    {
+      programs.${name} = {
+        shellAliases = lib.mkDefault config.home.shellAliases;
+        initExtra = lib.mkIf (cfg.logoutExtra != "") (
+          lib.mkAfter ''
+            trap ". $HOME/.${name}_logout" EXIT
+          ''
+        );
+      };
+      home.file.".${name}_logout" = lib.mkIf (cfg.logoutExtra != "") {
+        text = ''
+          # ~/.${name}_logout: DO NOT EDIT -- this file has been generated automatically.
 
-        environment.variables.ENV = lib.mkDefault "/etc/${etcRcPath}";
+          ${cfg.logoutExtra}
+        '';
+      };
+    };
 
-        programs.${pname} = {
-          _nixosModuleLoaded = true;
-          shellInit = ''
-            if [ -z "$__NIXOS_SET_ENVIRONMENT_DONE" ]; then
-              . ${config.system.build.setEnvironment}
-            fi
-            ${config.environment.shellInit}
-          '';
-          loginShellInit = config.environment.loginShellInit;
-          interactiveShellInit = config.environment.interactiveShellInit;
-          shellAliases = lib.mkDefault config.environment.shellAliases;
-        };
-
-        environment.etc.${etcRcPath}.text = ''
+  nixosFiles = {
+    ${etcRcPath} = {
+      content =
+        {
+          lib,
+          cfg,
+          config,
+          ...
+        }:
+        let
+          PNAME = lib.strings.toUpper name;
+          aliasesStr = lib.concatStringsSep "\n" (
+            lib.mapAttrsToList (k: v: "alias ${k}=${lib.escapeShellArg v}") cfg.shellAliases
+          );
+          ps1Line = mkPs1Line lib;
+        in
+        ''
           # /etc/${etcRcPath}: DO NOT EDIT -- this file has been generated automatically.
           # This file is read for interactive shells.
 
@@ -199,8 +244,19 @@ in
 
           [ -r "$HOME/${homeRcPath}" ] && . "$HOME/${homeRcPath}"
         '';
-
-        environment.etc."profile".text = lib.mkForce ''
+    };
+    "profile" = {
+      content =
+        {
+          lib,
+          cfg,
+          config,
+          ...
+        }:
+        let
+          PNAME = lib.strings.toUpper name;
+        in
+        lib.mkForce ''
           # /etc/profile: DO NOT EDIT -- this file has been generated automatically.
           # This file is read for login shells.
 
@@ -222,127 +278,23 @@ in
 
           [ -r "$ENV" ] && . "$ENV"
         '';
-      };
     };
+  };
 
-  darwinModule =
-    {
-      config,
-      lib,
-      pkgs,
-      ...
-    }:
-    let
-      PNAME = lib.strings.toUpper pname;
-      cfg = config.programs.${pname};
-
-      ps1Line = mkPs1Line lib;
-    in
-    {
-      options.programs.${pname} = {
-        enable = lib.mkEnableOption "${pname} shell";
-
-        package = lib.mkOption {
-          type = lib.types.package;
-          default = pkgs.${pname};
-          defaultText = lib.literalExpression "pkgs.${pname}";
-          description = "The ${pname} package to use.";
-        };
-
-        histFile = lib.mkOption {
-          type = lib.types.str;
-          default = "$HOME/.${pname}_history";
-          description = "Path to the history file. Evaluated at shell runtime.";
-        };
-
-        histSize = lib.mkOption {
-          type = lib.types.int;
-          default = 2000;
-          description = "Number of history lines to keep in memory.";
-        };
-
-        shellAliases = lib.mkOption {
-          type = lib.types.attrsOf lib.types.str;
-          default = { };
-          description = "Aliases to define in interactive shells.";
-        };
-
-        initExtra = lib.mkOption {
-          type = lib.types.lines;
-          default = "";
-          description = "Additional commands for interactive shell init.";
-        };
-
-        # internally assembled — do not set manually
-        shellInit = lib.mkOption {
-          type = lib.types.lines;
-          default = "";
-          internal = true;
-          visible = false;
-        };
-
-        loginShellInit = lib.mkOption {
-          type = lib.types.lines;
-          default = "";
-          internal = true;
-          visible = false;
-        };
-
-        interactiveShellInit = lib.mkOption {
-          type = lib.types.lines;
-          default = "";
-          internal = true;
-          visible = false;
-        };
-
-        _nixosModuleLoaded = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          internal = true;
-          visible = false;
-        };
-
-        _darwinModuleLoaded = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          internal = true;
-          visible = false;
-        };
-
-        _homeManagerModuleLoaded = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          internal = true;
-          visible = false;
-        };
-      };
-
-      config = lib.mkIf cfg.enable {
-        assertions = [
-          {
-            assertion = !cfg._nixosModuleLoaded;
-            message = "programs.${pname}: darwinModule cannot be used together with nixosModule";
-          }
-        ];
-
-        environment.systemPackages = [ cfg.package ];
-
-        environment.variables.ENV = lib.mkDefault "/etc/${etcRcPath}";
-        environment.variables.LANG = lib.mkDefault "C.UTF-8";
-
-        programs.${pname} = {
-          _darwinModuleLoaded = true;
-          shellInit = ''
-            if [ -z "$__NIX_DARWIN_SET_ENVIRONMENT_DONE" ]; then
-              . ${config.system.build.setEnvironment}
-            fi
-            ${config.environment.shellInit}
-          '';
-          loginShellInit = config.environment.loginShellInit;
-          interactiveShellInit = config.environment.interactiveShellInit;
-        };
-
-        environment.etc.${etcRcPath}.text = ''
+  darwinFiles = {
+    ${etcRcPath} = {
+      content =
+        {
+          lib,
+          cfg,
+          config,
+          ...
+        }:
+        let
+          PNAME = lib.strings.toUpper name;
+          ps1Line = mkPs1Line lib;
+        in
+        ''
           # /etc/${etcRcPath}: DO NOT EDIT -- this file has been generated automatically.
           # This file is read for interactive shells.
 
@@ -374,8 +326,19 @@ in
 
           [ -r "$HOME/${homeRcPath}" ] && . "$HOME/${homeRcPath}"
         '';
-
-        environment.etc."profile".text = ''
+    };
+    "profile" = {
+      content =
+        {
+          lib,
+          cfg,
+          config,
+          ...
+        }:
+        let
+          PNAME = lib.strings.toUpper name;
+        in
+        ''
           # /etc/profile: DO NOT EDIT -- this file has been generated automatically.
           # This file is read for login shells.
 
@@ -406,130 +369,24 @@ in
             . "$ENV"
           fi
         '';
-
-        environment.etc."profile".knownSha256Hashes = [
-          "a3fe9f414586c0d3cacbe3b6920a09d8718e503bca22e23fef882203bf765065" # macOS
-        ];
-      };
     };
+  };
 
-  homeManagerModule =
-    {
-      config,
-      lib,
-      pkgs,
-      ...
-    }:
-    let
-      PNAME = lib.strings.toUpper pname;
-      cfg = config.programs.${pname};
-
-      aliasesStr = lib.concatStringsSep "\n" (
-        lib.mapAttrsToList (k: v: "alias ${k}=${lib.escapeShellArg v}") cfg.shellAliases
-      );
-
-      sessionVariablesStr = lib.concatStringsSep "\n" (
-        lib.mapAttrsToList (k: v: "export ${k}=${lib.escapeShellArg (toString v)}") cfg.sessionVariables
-      );
-    in
-    {
-      options.programs.${pname} = {
-        enable = lib.mkEnableOption "${pname} shell";
-
-        package = lib.mkOption {
-          type = lib.types.package;
-          default = pkgs.${pname};
-          defaultText = lib.literalExpression "pkgs.${pname}";
-          description = "The ${pname} package to use.";
-        };
-
-        histFile = lib.mkOption {
-          type = lib.types.str;
-          default = "$HOME/.${pname}_history";
-          description = "Path to the history file. Evaluated at shell runtime.";
-        };
-
-        histSize = lib.mkOption {
-          type = lib.types.int;
-          default = 2000;
-          description = "Number of history lines to keep in memory.";
-        };
-
-        shellAliases = lib.mkOption {
-          type = lib.types.attrsOf lib.types.str;
-          default = { };
-          description = "Aliases to define in interactive shells.";
-        };
-
-        sessionVariables = lib.mkOption {
-          type = lib.types.attrsOf (
-            lib.types.oneOf [
-              lib.types.str
-              lib.types.int
-              lib.types.path
-            ]
+  hmFiles = {
+    ".profile" = {
+      content =
+        {
+          lib,
+          cfg,
+          config,
+          ...
+        }:
+        let
+          sessionVariablesStr = lib.concatStringsSep "\n" (
+            lib.mapAttrsToList (k: v: "export ${k}=${lib.escapeShellArg (toString v)}") cfg.sessionVariables
           );
-          default = { };
-          description = "Environment variables to export at login.";
-        };
-
-        profileExtra = lib.mkOption {
-          type = lib.types.lines;
-          default = "";
-          description = "Additional commands for login shell init.";
-        };
-
-        initExtra = lib.mkOption {
-          type = lib.types.lines;
-          default = "";
-          description = "Additional commands for interactive shell init.";
-        };
-
-        logoutExtra = lib.mkOption {
-          type = lib.types.lines;
-          default = "";
-          description = ''
-            Commands to run on shell exit. When non-empty, generates a logout
-            file and wires it into the interactive init via a trap.
-          '';
-        };
-
-        _nixosModuleLoaded = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          internal = true;
-          visible = false;
-        };
-
-        _darwinModuleLoaded = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          internal = true;
-          visible = false;
-        };
-
-        _homeManagerModuleLoaded = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          internal = true;
-          visible = false;
-        };
-      };
-
-      config = lib.mkIf cfg.enable {
-        home.packages = [ cfg.package ];
-
-        programs.${pname} = {
-          _homeManagerModuleLoaded = true;
-          shellAliases = lib.mkDefault config.home.shellAliases;
-          initExtra = lib.mkIf (cfg.logoutExtra != "") (
-            lib.mkAfter ''
-              trap ". $HOME/.${pname}_logout" EXIT
-            ''
-          );
-        };
-
-        home.file.".profile".text = ''
+        in
+        ''
           # ~/.profile: DO NOT EDIT -- this file has been generated automatically.
 
           . "${config.home.sessionVariablesPackage}/etc/profile.d/hm-session-vars.sh"
@@ -538,8 +395,17 @@ in
 
           ${cfg.profileExtra}
         '';
-
-        home.file.${homeRcPath}.text = ''
+    };
+    ${homeRcPath} = {
+      content =
+        { lib, cfg, ... }:
+        let
+          PNAME = lib.strings.toUpper name;
+          aliasesStr = lib.concatStringsSep "\n" (
+            lib.mapAttrsToList (k: v: "alias ${k}=${lib.escapeShellArg v}") cfg.shellAliases
+          );
+        in
+        ''
           # ~/${homeRcPath}: DO NOT EDIT -- this file has been generated automatically.
 
           # Only execute this file once per shell.
@@ -560,14 +426,6 @@ in
 
           ${cfg.initExtra}
         '';
-
-        home.file.".${pname}_logout" = lib.mkIf (cfg.logoutExtra != "") {
-          text = ''
-            # ~/.${pname}_logout: DO NOT EDIT -- this file has been generated automatically.
-
-            ${cfg.logoutExtra}
-          '';
-        };
-      };
     };
+  };
 }

@@ -1,14 +1,23 @@
 {
-  # Main entry point: generates nixosModule, homeManagerModule, and darwinModule
-  # for a POSIX-compatible shell.
+  # Generic shell module builder.
+  # Accepts declarative file specs per platform and returns three modules.
   #
-  # Usage (inside a NixOS / home-manager / nix-darwin module):
+  # Usage:
+  #   shnix.lib.mkShellModule {
+  #     name = "rc";
+  #     extraOptions = { lib, ... }: { ... };
+  #     hmFiles = { ".rcrc" = { content = ...; }; };
+  #   }
+  mkShellModule = import ./mk-shell-module.nix;
+
+  # POSIX-specialized wrapper around mkShellModule.
+  # Provides POSIX-specific defaults, file templates, and environment integration.
+  #
+  # Usage:
   #   shnix.lib.mkPosixShellModule {
   #     name = "ksh";
-  #     package = pkgs.ksh93;
-  #     initFiles = { ... };
+  #     etcRcPath = "kshrc";
+  #     homeRcPath = ".kshrc";
   #   }
-  #
-  # Returns: { nixosModule, homeManagerModule, darwinModule }
   mkPosixShellModule = import ./mk-posix-shell.nix;
 }

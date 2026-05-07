@@ -230,4 +230,77 @@ in
       !result.success;
     expected = true;
   };
+
+  "lib.mkShellModule returns three modules" = {
+    expr = builtins.attrNames (self.lib.mkShellModule { name = "rc"; });
+    expected = [
+      "darwinModule"
+      "homeManagerModule"
+      "nixosModule"
+    ];
+  };
+
+  "rc hm module produces ~/.rcrc" = {
+    expr =
+      let
+        cfg =
+          (evalHm [
+            stubs.homeManager
+            self.homeManagerModules.rc
+            { programs.rc.enable = true; }
+          ]).config;
+      in
+      builtins.hasAttr ".rcrc" cfg.home.file;
+    expected = true;
+  };
+
+  "rc hm module uses rc syntax" = {
+    expr =
+      let
+        cfg =
+          (evalHm [
+            stubs.homeManager
+            self.homeManagerModules.rc
+            {
+              programs.rc.enable = true;
+              programs.rc.prompt = [
+                "% "
+                "  "
+              ];
+            }
+          ]).config;
+      in
+      lib.hasInfix "prompt=('% ' '  ')" cfg.home.file.".rcrc".text;
+    expected = true;
+  };
+
+  "rc nixos module installs package" = {
+    expr =
+      let
+        cfg =
+          (evalNixos [
+            stubs.nixos
+            self.nixosModules.rc
+            { programs.rc.enable = true; }
+          ]).config;
+      in
+      lib.elem pkgs.rc cfg.environment.systemPackages;
+    expected = true;
+  };
+
+  "rc nixos+darwin conflict is rejected" = {
+    expr =
+      let
+        result = builtins.tryEval (
+          (evalNixos [
+            stubs.nixos
+            self.nixosModules.rc
+            self.darwinModules.rc
+            { programs.rc.enable = true; }
+          ]).config.environment.systemPackages
+        );
+      in
+      !result.success;
+    expected = true;
+  };
 }
