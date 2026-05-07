@@ -41,7 +41,8 @@ jobs:
         id: prefetch
         run: |
           set -euo pipefail
-          hash=$(nix run nixpkgs#nix-prefetch-git -- --url https://github.com/rakitzis/rc --rev "${{ steps.master.outputs.sha }}" | jq -r '.hash // .sha256')
+          url="https://github.com/rakitzis/rc/archive/${{ steps.master.outputs.sha }}.tar.gz"
+          hash=$(nix store prefetch-file --json --unpack "$url" | jq -r '.hash')
           [[ "$hash" =~ ^sha256-[A-Za-z0-9+/=]+$ ]] || { echo "ERROR: bad hash '$hash'"; exit 1; }
           echo "hash=$hash" >> "$GITHUB_OUTPUT"
 
