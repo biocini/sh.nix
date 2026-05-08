@@ -75,6 +75,16 @@
         type = lib.types.attrsOf (lib.types.nullOr lib.types.str);
         default = { };
       };
+      home.sessionVariables = lib.mkOption {
+        type = lib.types.attrsOf (
+          lib.types.oneOf [
+            lib.types.str
+            lib.types.int
+            lib.types.path
+          ]
+        );
+        default = { };
+      };
       home.sessionVariablesPackage = lib.mkOption {
         type = lib.types.package;
         default = pkgs.writeTextFile {

@@ -1,4 +1,12 @@
 {
+  # Pure data extraction from global environment configuration.
+  # Returns standardized attrsets for nixos, darwin, and homeManager platforms.
+  #
+  # Usage:
+  #   let env = shnix.lib.envBridge.nixos { inherit config; };
+  #   in programs.mysh.shellAliases = lib.mkDefault env.shellAliases;
+  envBridge = import ./env-bridge.nix;
+
   # Generic shell module builder.
   # Accepts declarative file specs per platform and returns three modules.
   #

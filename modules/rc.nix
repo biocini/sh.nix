@@ -1,5 +1,9 @@
 { shnixLib }:
 
+let
+  envBridge = import ../lib/env-bridge.nix;
+in
+
 shnixLib.mkShellModule {
   name = "rc";
 
@@ -27,6 +31,18 @@ shnixLib.mkShellModule {
         description = "Functions to define in rc (rc uses fn, not alias).";
       };
 
+      sessionVariables = lib.mkOption {
+        type = lib.types.attrsOf (
+          lib.types.oneOf [
+            lib.types.str
+            lib.types.int
+            lib.types.path
+          ]
+        );
+        default = { };
+        description = "Environment variables to set in rc.";
+      };
+
       initExtra = lib.mkOption {
         type = lib.types.lines;
         default = "";
@@ -34,14 +50,61 @@ shnixLib.mkShellModule {
       };
     };
 
+  nixosConfig =
+    { config, lib, ... }:
+    let
+      env = envBridge.nixos { inherit config; };
+    in
+    {
+      programs.rc = {
+        shellAliases = lib.mkDefault env.shellAliases;
+        initExtra = lib.mkDefault env.interactiveShellInit;
+        sessionVariables = lib.mkDefault env.variables;
+      };
+    };
+
+  darwinConfig =
+    { config, lib, ... }:
+    let
+      env = envBridge.darwin { inherit config; };
+    in
+    {
+      programs.rc = {
+        shellAliases = lib.mkDefault env.shellAliases;
+        initExtra = lib.mkDefault env.interactiveShellInit;
+        sessionVariables = lib.mkDefault env.variables;
+      };
+    };
+
+  hmConfig =
+    { config, lib, ... }:
+    let
+      env = envBridge.homeManager { inherit config; };
+    in
+    {
+      programs.rc = {
+        shellAliases = lib.mkDefault env.shellAliases;
+        sessionVariables = lib.mkDefault env.sessionVariables;
+      };
+    };
+
   nixosFiles = {
     "rcrc" = {
       content =
         { lib, cfg, ... }:
+        let
+          sessionVarsStr = lib.optionalString (cfg.sessionVariables != { }) (
+            "# Session variables.\n"
+            + lib.concatStringsSep "\n" (
+              lib.mapAttrsToList (k: v: "${k} = ${lib.escapeShellArg (toString v)}") cfg.sessionVariables
+            )
+            + "\n"
+          );
+        in
         ''
           # /etc/rcrc: DO NOT EDIT -- this file has been generated automatically.
 
-          # History file.
+          ${sessionVarsStr}# History file.
           history=${lib.escapeShellArg cfg.historyFile}
 
           # Prompt.
@@ -59,10 +122,19 @@ shnixLib.mkShellModule {
     "rcrc" = {
       content =
         { lib, cfg, ... }:
+        let
+          sessionVarsStr = lib.optionalString (cfg.sessionVariables != { }) (
+            "# Session variables.\n"
+            + lib.concatStringsSep "\n" (
+              lib.mapAttrsToList (k: v: "${k} = ${lib.escapeShellArg (toString v)}") cfg.sessionVariables
+            )
+            + "\n"
+          );
+        in
         ''
           # /etc/rcrc: DO NOT EDIT -- this file has been generated automatically.
 
-          # History file.
+          ${sessionVarsStr}# History file.
           history=${lib.escapeShellArg cfg.historyFile}
 
           # Prompt.
@@ -80,10 +152,19 @@ shnixLib.mkShellModule {
     ".rcrc" = {
       content =
         { lib, cfg, ... }:
+        let
+          sessionVarsStr = lib.optionalString (cfg.sessionVariables != { }) (
+            "# Session variables.\n"
+            + lib.concatStringsSep "\n" (
+              lib.mapAttrsToList (k: v: "${k} = ${lib.escapeShellArg (toString v)}") cfg.sessionVariables
+            )
+            + "\n"
+          );
+        in
         ''
           # ~/.rcrc: DO NOT EDIT -- this file has been generated automatically.
 
-          # History file.
+          ${sessionVarsStr}# History file.
           history=${lib.escapeShellArg cfg.historyFile}
 
           # Prompt.
