@@ -37,6 +37,18 @@
         type = lib.types.lines;
         default = "";
       };
+      environment.shells = lib.mkOption {
+        type = lib.types.listOf lib.types.path;
+        default = [ ];
+      };
+      environment.systemPath = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+      };
+      environment.profileRelativeEnvVars = lib.mkOption {
+        type = lib.types.attrsOf (lib.types.listOf lib.types.str);
+        default = { };
+      };
       assertions = lib.mkOption {
         type = lib.types.listOf lib.types.anything;
         default = [ ];

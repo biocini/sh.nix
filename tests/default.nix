@@ -108,7 +108,7 @@ lib.mapAttrs'
       expected = true;
     };
 
-    "nixos module sets ENV" = {
+    "nixos module does not set global ENV" = {
       expr =
         let
           cfg =
@@ -118,7 +118,35 @@ lib.mapAttrs'
               { programs.ksh.enable = true; }
             ]).config;
         in
-        cfg.environment.variables.ENV or null == "/etc/kshrc";
+        cfg.environment.variables.ENV or null == null;
+      expected = true;
+    };
+
+    "profile sets ENV inside ksh guard" = {
+      expr =
+        let
+          cfg =
+            (evalNixos [
+              stubs.nixos
+              self.nixosModules.ksh
+              { programs.ksh.enable = true; }
+            ]).config;
+        in
+        lib.hasInfix "export ENV=/etc/kshrc" cfg.environment.etc.profile.text;
+      expected = true;
+    };
+
+    "nixos module registers shell in environment.shells" = {
+      expr =
+        let
+          cfg =
+            (evalNixos [
+              stubs.nixos
+              self.nixosModules.ksh
+              { programs.ksh.enable = true; }
+            ]).config;
+        in
+        lib.elem "${pkgs.ksh}/bin/ksh" cfg.environment.shells;
       expected = true;
     };
 
@@ -150,7 +178,7 @@ lib.mapAttrs'
       expected = true;
     };
 
-    "darwin module sets ENV and LANG" = {
+    "darwin module sets LANG" = {
       expr =
         let
           cfg =
@@ -160,8 +188,21 @@ lib.mapAttrs'
               { programs.ksh.enable = true; }
             ]).config;
         in
-        (cfg.environment.variables.ENV or null == "/etc/kshrc")
-        && (cfg.environment.variables.LANG or null == "C.UTF-8");
+        cfg.environment.variables.LANG or null == "C.UTF-8";
+      expected = true;
+    };
+
+    "darwin module does not set global ENV" = {
+      expr =
+        let
+          cfg =
+            (evalDarwin [
+              stubs.nixos
+              self.darwinModules.ksh
+              { programs.ksh.enable = true; }
+            ]).config;
+        in
+        cfg.environment.variables.ENV or null == null;
       expected = true;
     };
 
@@ -218,6 +259,63 @@ lib.mapAttrs'
             ]).config;
         in
         lib.hasInfix "HISTSIZE=10000" cfg.environment.etc.kshrc.text;
+      expected = true;
+    };
+
+    "ksh PS1 expands variables at runtime" = {
+      expr =
+        let
+          cfg =
+            (evalNixos [
+              stubs.nixos
+              self.nixosModules.ksh
+              { programs.ksh.enable = true; }
+            ]).config;
+        in
+        lib.hasInfix ''PS1="''${USER}@''${HOSTNAME}:''${PWD}$ "'' cfg.environment.etc.kshrc.text;
+      expected = true;
+    };
+
+    "profile contains bash guard" = {
+      expr =
+        let
+          cfg =
+            (evalNixos [
+              stubs.nixos
+              self.nixosModules.ksh
+              { programs.ksh.enable = true; }
+            ]).config;
+        in
+        lib.hasInfix ''[ -n "''${BASH_VERSION:-}" ]'' cfg.environment.etc.profile.text;
+      expected = true;
+    };
+
+    "profile contains interactive guard in kshrc" = {
+      expr =
+        let
+          cfg =
+            (evalNixos [
+              stubs.nixos
+              self.nixosModules.ksh
+              { programs.ksh.enable = true; }
+            ]).config;
+        in
+        lib.hasInfix "case $- in" cfg.environment.etc.kshrc.text;
+      expected = true;
+    };
+
+    "multi-shell profile has both guards" = {
+      expr =
+        let
+          cfg =
+            (evalNixos [
+              stubs.nixos
+              self.nixosModules.ksh
+              { programs.ksh.enable = true; }
+            ]).config;
+          profileText = cfg.environment.etc.profile.text;
+        in
+        (lib.hasInfix "KSH_VERSION" profileText) && (lib.hasInfix "BASH_VERSION" profileText);
       expected = true;
     };
 
@@ -291,6 +389,20 @@ lib.mapAttrs'
             ]).config;
         in
         lib.elem pkgs.rc cfg.environment.systemPackages;
+      expected = true;
+    };
+
+    "rc nixos module registers shell in environment.shells" = {
+      expr =
+        let
+          cfg =
+            (evalNixos [
+              stubs.nixos
+              self.nixosModules.rc
+              { programs.rc.enable = true; }
+            ]).config;
+        in
+        lib.elem "${pkgs.rc}/bin/rc" cfg.environment.shells;
       expected = true;
     };
 

@@ -24,42 +24,72 @@ let
   posOpts = import ./posix/options.nix;
   posCfgs = import ./posix/configs.nix { inherit envBridge; };
   posFiles = import ./posix/files.nix;
+  guards = import ./posix/guards.nix;
+
+  # Module that registers this shell in the unified profile generator
+  shellRegistration =
+    { config, lib, ... }:
+    {
+      config._shnix.posixShells.${name} = lib.mkIf config.programs.${name}.enable {
+        guard = guards.${name} or ''[ -n "$${lib.toUpper name}_VERSION" ]'';
+        rcFile = "/etc/${etcRcPath}";
+        priority = 100;
+      };
+    };
+
+  # Base modules without profile generation (rc files only)
+  base = import ./mk-shell-module.nix {
+    inherit name;
+
+    extraOptions = posOpts.posixOptions { inherit name; };
+    extraHmOptions = posOpts.hmOptions;
+
+    nixosConfig = posCfgs.nixos { inherit name; };
+    darwinConfig = posCfgs.darwin { inherit name; };
+    hmConfig = posCfgs.hm { inherit name; };
+
+    nixosFiles = {
+      ${etcRcPath} = {
+        content = posFiles.nixosRc { inherit name etcRcPath homeRcPath; };
+      };
+    };
+
+    darwinFiles = {
+      ${etcRcPath} = {
+        content = posFiles.darwinRc { inherit name etcRcPath homeRcPath; };
+      };
+    };
+
+    hmFiles = {
+      ".profile" = {
+        content = posFiles.hmProfile { inherit name; };
+      };
+      ${homeRcPath} = {
+        content = posFiles.hmRc { inherit name homeRcPath; };
+      };
+    };
+  };
 in
-
-import ./mk-shell-module.nix {
-  inherit name;
-
-  extraOptions = posOpts.posixOptions { inherit name; };
-  extraHmOptions = posOpts.hmOptions;
-
-  nixosConfig = posCfgs.nixos { inherit name etcRcPath; };
-  darwinConfig = posCfgs.darwin { inherit name etcRcPath; };
-  hmConfig = posCfgs.hm { inherit name; };
-
-  nixosFiles = {
-    ${etcRcPath} = {
-      content = posFiles.nixosRc { inherit name etcRcPath homeRcPath; };
+{
+  nixosModule =
+    { ... }:
+    {
+      imports = [
+        base.nixosModule
+        shellRegistration
+        ./posix/profile-nixos.nix
+      ];
     };
-    "profile" = {
-      content = posFiles.nixosProfile { inherit name; };
-    };
-  };
 
-  darwinFiles = {
-    ${etcRcPath} = {
-      content = posFiles.darwinRc { inherit name etcRcPath homeRcPath; };
+  darwinModule =
+    { ... }:
+    {
+      imports = [
+        base.darwinModule
+        shellRegistration
+        ./posix/profile-darwin.nix
+      ];
     };
-    "profile" = {
-      content = posFiles.darwinProfile { inherit name; };
-    };
-  };
 
-  hmFiles = {
-    ".profile" = {
-      content = posFiles.hmProfile { inherit name; };
-    };
-    ${homeRcPath} = {
-      content = posFiles.hmRc { inherit name homeRcPath; };
-    };
-  };
+  homeManagerModule = base.homeManagerModule;
 }

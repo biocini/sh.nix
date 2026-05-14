@@ -8,10 +8,11 @@
       inherit (config.environment)
         shellAliases
         shellInit
-        loginShellInit
         interactiveShellInit
         variables
         ;
+      # Note: loginShellInit is handled by the unified profile generator
+      # directly (unconditional in /etc/profile), not per-shell.
     };
 
   # nix-darwin platform: same structure as NixOS
@@ -21,10 +22,11 @@
       inherit (config.environment)
         shellAliases
         shellInit
-        loginShellInit
         interactiveShellInit
         variables
         ;
+      # Note: loginShellInit is handled by the unified profile generator
+      # directly (unconditional in /etc/profile), not per-shell.
     };
 
   # home-manager platform: extracts from config.home.*

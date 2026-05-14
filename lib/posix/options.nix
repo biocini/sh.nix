@@ -38,15 +38,19 @@
       loginShellInit = lib.mkOption {
         type = lib.types.lines;
         default = "";
-        internal = true;
-        visible = false;
+        description = ''
+          Shell script code called during login shell initialisation.
+          This runs only when this shell is the login shell.
+        '';
       };
 
       interactiveShellInit = lib.mkOption {
         type = lib.types.lines;
         default = "";
-        internal = true;
-        visible = false;
+        description = ''
+          Shell script code called during interactive shell initialisation.
+          This runs in the shell's rc file after the interactive guard.
+        '';
       };
     };
 

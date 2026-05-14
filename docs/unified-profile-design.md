@@ -10,7 +10,7 @@ Currently, each call to `mkPosixShellModule` generates its own `/etc/profile` vi
 
 ```nix
 nixosFiles = {
-  ${etcRcPath} = { content = ...; };
+  ${etcRcPath} = { content = ... };
   "profile" = { content = posFiles.nixosProfile { inherit name; }; };  # mkForce!
 };
 ```
@@ -23,6 +23,76 @@ If a user enables both `programs.ksh` and `programs.yash`, both modules `mkForce
 2. **All POSIX shells on a given platform share the same global init.** `environment.shellInit`, `environment.loginShellInit`, and `setEnvironment` are platform-global, not per-shell.
 3. **The only shell-specific decision in `/etc/profile` is which rc file to source.** Everything else is shared infrastructure.
 4. **A shell identifies itself via exported variables at runtime.** `BASH_VERSION`, `KSH_VERSION`, `YASH_VERSION`, etc. These are reliable and standard.
+
+## Per-Shell Option Mapping
+
+Each POSIX shell exposes `programs.<name>.{shellInit,loginShellInit,interactiveShellInit}`. The unified generator must map these to the correct file and guard context:
+
+| Option                                 | Goes In         | Guard Context                                    |
+| -------------------------------------- | --------------- | ------------------------------------------------ |
+| `environment.shellInit`                | `/etc/profile`  | Unconditional (all login shells)                 |
+| `environment.loginShellInit`           | `/etc/profile`  | Unconditional (all login shells)                 |
+| `programs.<name>.shellInit`            | `/etc/profile`  | **Not read** — internal, handled by generator    |
+| `programs.<name>.loginShellInit`       | `/etc/profile`  | Inside the shell's guard block (only that shell) |
+| `programs.<name>.interactiveShellInit` | `/etc/<name>rc` | After the interactive guard in the rc file       |
+
+### Rationale
+
+**`environment.shellInit`** runs unconditionally in `/etc/profile` for all login shells. This is the canonical place for shell-independent login initialization.
+
+**`environment.loginShellInit`** runs unconditionally in `/etc/profile` for all login shells. This is the canonical place for shell-independent login initialization that only runs in login shells (not in subshells).
+
+**`shellInit`** is reserved for `programs.bash` and is not user-facing in sh.nix POSIX shells. The `setEnvironment` bootstrap is handled by the unified profile generator itself. The profile generator does NOT read `programs.bash.shellInit`.
+
+**`loginShellInit`** is for **shell-specific** login initialization only. It does NOT include `environment.loginShellInit` — that is handled unconditionally by the profile generator. A shell's `loginShellInit` runs only when that shell is identified by the guard block.
+
+**`interactiveShellInit`** is shell-specific interactive initialization. It runs only for interactive shells of that type. It goes into the shell's rc file (`/etc/kshrc`) after the interactive guard:
+
+```sh
+# Commands that should be applied only for interactive shells.
+case $- in
+  *i*) ;;
+  *) return ;;
+esac
+
+${cfg.interactiveShellInit}
+```
+
+This mirrors upstream bash: `programs.bash.interactiveShellInit` goes into `/etc/bashrc` after the `if [ -n "$PS1" ]` guard.
+
+### Option Assembly (`configs.nix`)
+
+```nix
+programs.${name} = {
+  # Unconditional login shell bootstrap (setEnvironment + global shellInit)
+  shellInit = ''
+    if [ -z "$__NIXOS_SET_ENVIRONMENT_DONE" ]; then
+      . ${config.system.build.setEnvironment}
+    fi
+    ${env.shellInit}
+  '';
+
+  # Shell-specific login init (injected inside guard block in /etc/profile)
+  # environment.loginShellInit is handled unconditionally by the profile generator.
+  loginShellInit = "";
+
+  # Shell-specific interactive init (injected after guard in /etc/<name>rc)
+  interactiveShellInit = env.interactiveShellInit;
+
+  shellAliases = lib.mkDefault env.shellAliases;
+};
+```
+
+The unified profile generator reads:
+
+- `config.environment.shellInit` — global, unconditional
+- `config.environment.loginShellInit` — global, unconditional
+- `config.programs.${name}.shellInit` — **not read** (internal, handled by generator)
+- `config.programs.${name}.loginShellInit` — per-shell, inside guard
+
+The rc file generator reads:
+
+- `config.programs.${name}.interactiveShellInit` — per-shell, after interactive guard
 
 ## Architecture
 
@@ -102,15 +172,17 @@ if test -f /etc/profile.local; then
     . /etc/profile.local
 fi
 
-# Dispatch to shell-specific rc, setting ENV for child non-login shells
+# Dispatch to shell-specific rc
 if [ -n "${BASH_VERSION:-}" ]; then
-  export ENV=/etc/bashrc
+  ${config.programs.bash.loginShellInit}
   [ -r /etc/bashrc ] && . /etc/bashrc
 elif [ -n "$KSH_VERSION" ]; then
   export ENV=/etc/kshrc
+  ${config.programs.ksh.loginShellInit}
   [ -r /etc/kshrc ] && . /etc/kshrc
 elif [ -n "$YASH_VERSION" ]; then
   export ENV=/etc/yashrc
+  ${config.programs.yash.loginShellInit}
   [ -r /etc/yashrc ] && . /etc/yashrc
 fi
 ```
@@ -264,14 +336,17 @@ Each returned module imports the appropriate profile generator. Duplicate import
 
 ### 6. Removed/Changed Behavior
 
-| Feature                                    | Current                              | Proposed                                                              |
-| ------------------------------------------ | ------------------------------------ | --------------------------------------------------------------------- |
-| `/etc/profile` generation                  | Per-shell `mkForce`                  | **Single unified generator**                                          |
-| `ENV` as primary dispatch                  | Profile ends with `. "$ENV"`         | **Dynamic guard block** with `export ENV=...` per shell               |
-| `environment.variables.ENV`                | Set by each POSIX shell module       | **Removed** — handled inside guard block                              |
-| `programs.${name}.shellInit`               | Assembled per-shell, read by profile | **Profile reads global values directly** (they were identical anyway) |
-| `nixosProfile` / `darwinProfile` templates | In `files.nix`                       | **Moved to profile generators**                                       |
-| Multi-shell conflict                       | `mkForce` collision                  | **No collision** — single generator reads registry                    |
+| Feature                                    | Current                              | Proposed                                                           |
+| ------------------------------------------ | ------------------------------------ | ------------------------------------------------------------------ |
+| `/etc/profile` generation                  | Per-shell `mkForce`                  | **Single unified generator**                                       |
+| `ENV` as primary dispatch                  | Profile ends with `. "$ENV"`         | **Dynamic guard block** with `export ENV=...` per shell            |
+| `environment.variables.ENV`                | Set by each POSIX shell module       | **Removed** — handled inside guard block                           |
+| `programs.${name}.shellInit`               | Assembled per-shell, read by profile | **Not read** — setEnvironment handled by generator                 |
+| `programs.${name}.loginShellInit`          | Assembled per-shell, read by profile | **Inside guard block** in /etc/profile (shell-specific login init) |
+| `programs.${name}.interactiveShellInit`    | Assembled per-shell, read by profile | **After interactive guard** in /etc/<name>rc                       |
+| `nixosProfile` / `darwinProfile` templates | In `files.nix`                       | **Moved to profile generators**                                    |
+| Multi-shell conflict                       | `mkForce` collision                  | **No collision** — single generator reads registry                 |
+| `ENV` for bash                             | Set via `export ENV=/etc/bashrc`     | **Not set** — bash ignores `ENV`; uses `BASH_ENV` if needed        |
 
 ## Why This Is Better
 
@@ -280,6 +355,16 @@ Each returned module imports the appropriate profile generator. Duplicate import
 3. **Extensible:** Adding a new shell means adding one line to `guards.nix` and calling `mkPosixShellModule`.
 4. **Platform-convergent:** NixOS and nix-darwin share the same registry and guard logic; only the profile template differs.
 5. **No global `ENV` conflict:** `ENV` is set inside the guard block, not via `environment.variables.ENV`. Each shell exports its own `ENV` value after being identified.
+
+## Home Manager Scope
+
+The unified `/etc/profile` generator affects **only NixOS and nix-darwin**. Home Manager is explicitly out of scope because:
+
+1. HM does not generate `/etc/profile` or `/etc/bashrc` — it generates `~/.bash_profile`, `~/.bashrc`, `~/.zshrc`, etc.
+2. HM has no `environment.shellInit`/`loginShellInit`/`interactiveShellInit` options (except fish-specific ones that are not bridged)
+3. HM's session variable mechanism (`hm-session-vars.sh`) is independent and per-user
+
+The `homeManagerModule` returned by `mkPosixShellModule` remains unchanged.
 
 ## Open Questions
 

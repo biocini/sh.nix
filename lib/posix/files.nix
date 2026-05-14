@@ -1,26 +1,5 @@
 rec {
-  mkPs1Line =
-    lib:
-    "PS1="
-    + lib.escapeShellArg (
-      lib.concatStrings [
-        "$"
-        "{"
-        "USER"
-        "}"
-        "@"
-        "$"
-        "{"
-        "HOSTNAME"
-        "}"
-        ":"
-        "$"
-        "{"
-        "PWD"
-        "}"
-        "$ "
-      ]
-    );
+  mkPs1Line = lib: ''PS1="''${USER}@''${HOSTNAME}:''${PWD}$ "'';
 
   nixosRc =
     {
@@ -31,7 +10,6 @@ rec {
     {
       lib,
       cfg,
-      config,
       ...
     }:
     let
@@ -54,6 +32,12 @@ rec {
         . /etc/profile
       fi
 
+      # Commands that should be applied only for interactive shells.
+      case $- in
+        *i*) ;;
+        *) return ;;
+      esac
+
       # Setup command line history.
       HISTSIZE=${toString cfg.histSize}
       HISTFILE=${cfg.histFile}
@@ -72,40 +56,6 @@ rec {
       fi
 
       [ -r "$HOME/${homeRcPath}" ] && . "$HOME/${homeRcPath}"
-    '';
-
-  nixosProfile =
-    { name }:
-    {
-      lib,
-      cfg,
-      config,
-      ...
-    }:
-    let
-      PNAME = lib.strings.toUpper name;
-    in
-    lib.mkForce ''
-      # /etc/profile: DO NOT EDIT -- this file has been generated automatically.
-      # This file is read for login shells.
-
-      # Only execute this file once per shell.
-      if [ -n "$__ETC_PROFILE_SOURCED" ]; then return; fi
-      __ETC_PROFILE_SOURCED=1
-
-      # Prevent this file from being sourced by interactive non-login child shells.
-      export __ETC_PROFILE_DONE=1
-
-      ${cfg.shellInit}
-
-      ${cfg.loginShellInit}
-
-      # Read system-wide modifications.
-      if test -f /etc/profile.local; then
-        . /etc/profile.local
-      fi
-
-      [ -r "$ENV" ] && . "$ENV"
     '';
 
   darwinRc =
@@ -137,6 +87,12 @@ rec {
         . /etc/profile
       fi
 
+      # Commands that should be applied only for interactive shells.
+      case $- in
+        *i*) ;;
+        *) return ;;
+      esac
+
       # Setup command line history.
       HISTSIZE=${toString cfg.histSize}
       HISTFILE=${cfg.histFile}
@@ -157,51 +113,7 @@ rec {
       [ -r "$HOME/${homeRcPath}" ] && . "$HOME/${homeRcPath}"
     '';
 
-  darwinProfile =
-    { name }:
-    {
-      lib,
-      cfg,
-      config,
-      ...
-    }:
-    let
-      PNAME = lib.strings.toUpper name;
-    in
-    ''
-      # /etc/profile: DO NOT EDIT -- this file has been generated automatically.
-      # This file is read for login shells.
-
-      # Only execute this file once per shell.
-      if [ -n "$__ETC_PROFILE_SOURCED" ]; then return; fi
-      __ETC_PROFILE_SOURCED=1
-
-      # Prevent this file from being sourced by interactive non-login child shells.
-      export __ETC_PROFILE_DONE=1
-
-      if [ -x /usr/libexec/path_helper ]; then
-        eval `/usr/libexec/path_helper -s`
-      fi
-
-      ${cfg.shellInit}
-
-      ${cfg.loginShellInit}
-
-      # Read system-wide modifications.
-      if test -f /etc/profile.local; then
-        . /etc/profile.local
-      fi
-
-      # Escape hatch for bash on darwin
-      if [ "''${BASH-no}" != "no" ]; then
-        [ -r /etc/bashrc ] && . /etc/bashrc
-      elif [ -r "$ENV" ]; then
-        . "$ENV"
-      fi
-    '';
-
   hmProfile =
-    { name }:
     {
       lib,
       cfg,

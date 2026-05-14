@@ -51,11 +51,17 @@ shnixLib.mkShellModule {
     };
 
   nixosConfig =
-    { config, lib, ... }:
+    {
+      config,
+      lib,
+      cfg,
+      ...
+    }:
     let
       env = envBridge.nixos { inherit config; };
     in
     {
+      environment.shells = [ "${cfg.package}${cfg.package.passthru.shellPath or "/bin/rc"}" ];
       programs.rc = {
         shellAliases = lib.mkDefault env.shellAliases;
         initExtra = lib.mkDefault env.interactiveShellInit;
@@ -64,11 +70,17 @@ shnixLib.mkShellModule {
     };
 
   darwinConfig =
-    { config, lib, ... }:
+    {
+      config,
+      lib,
+      cfg,
+      ...
+    }:
     let
       env = envBridge.darwin { inherit config; };
     in
     {
+      environment.shells = [ "${cfg.package}${cfg.package.passthru.shellPath or "/bin/rc"}" ];
       programs.rc = {
         shellAliases = lib.mkDefault env.shellAliases;
         initExtra = lib.mkDefault env.interactiveShellInit;

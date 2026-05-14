@@ -79,8 +79,21 @@ let
           pkgs
           cfg
           ;
-      }
-      // extraHmOptions {
+      };
+    };
+
+  hmOnlyOptions =
+    {
+      config,
+      lib,
+      pkgs,
+      ...
+    }:
+    let
+      cfg = config.programs.${pname};
+    in
+    {
+      options.programs.${pname} = extraHmOptions {
         inherit
           config
           lib
@@ -205,7 +218,10 @@ in
       cfg = config.programs.${pname};
     in
     {
-      imports = [ baseOptions ];
+      imports = [
+        baseOptions
+        hmOnlyOptions
+      ];
       config = lib.mkIf cfg.enable (
         lib.mkMerge [
           {

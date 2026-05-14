@@ -6,7 +6,7 @@
   libiconv,
 }:
 
-stdenv.mkDerivation {
+stdenv.mkDerivation (finalAttrs: {
   pname = "ksh";
   version = "unstable-2026-04-23";
 
@@ -69,4 +69,4 @@ stdenv.mkDerivation {
   passthru = {
     shellPath = "/bin/ksh";
   };
-}
+})
