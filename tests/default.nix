@@ -548,4 +548,21 @@ lib.mapAttrs'
         !(lib.hasInfix "# Session variables." cfg.environment.etc.rcrc.text);
       expected = true;
     };
+
+    "rc alias with closing brace is rejected" = {
+      expr =
+        let
+          cfg =
+            (evalNixos [
+              stubs.nixos
+              self.nixosModules.rc
+              {
+                programs.rc.enable = true;
+                programs.rc.shellAliases.bad = "echo } foo";
+              }
+            ]).config;
+        in
+        lib.any (a: !a.assertion) cfg.assertions;
+      expected = true;
+    };
   }

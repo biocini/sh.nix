@@ -114,6 +114,7 @@ rec {
     '';
 
   hmProfile =
+    { name }:
     {
       lib,
       cfg,

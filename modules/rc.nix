@@ -61,6 +61,12 @@ shnixLib.mkShellModule {
       env = envBridge.nixos { inherit config; };
     in
     {
+      assertions = [
+        {
+          assertion = lib.all (v: !lib.hasInfix "}" v) (lib.attrValues cfg.shellAliases);
+          message = "rc shellAliases cannot contain '}' (breaks fn syntax)";
+        }
+      ];
       environment.shells = [ "${cfg.package}${cfg.package.passthru.shellPath or "/bin/rc"}" ];
       programs.rc = {
         shellAliases = lib.mkDefault env.shellAliases;
@@ -80,6 +86,12 @@ shnixLib.mkShellModule {
       env = envBridge.darwin { inherit config; };
     in
     {
+      assertions = [
+        {
+          assertion = lib.all (v: !lib.hasInfix "}" v) (lib.attrValues cfg.shellAliases);
+          message = "rc shellAliases cannot contain '}' (breaks fn syntax)";
+        }
+      ];
       environment.shells = [ "${cfg.package}${cfg.package.passthru.shellPath or "/bin/rc"}" ];
       programs.rc = {
         shellAliases = lib.mkDefault env.shellAliases;
@@ -94,6 +106,12 @@ shnixLib.mkShellModule {
       env = envBridge.homeManager { inherit config; };
     in
     {
+      assertions = [
+        {
+          assertion = lib.all (v: !lib.hasInfix "}" v) (lib.attrValues config.programs.rc.shellAliases);
+          message = "rc shellAliases cannot contain '}' (breaks fn syntax)";
+        }
+      ];
       programs.rc = {
         shellAliases = lib.mkDefault env.shellAliases;
         sessionVariables = lib.mkDefault env.sessionVariables;

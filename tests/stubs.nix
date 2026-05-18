@@ -113,6 +113,10 @@
         type = lib.types.str;
         default = "/home/test";
       };
+      assertions = lib.mkOption {
+        type = lib.types.listOf lib.types.anything;
+        default = [ ];
+      };
     };
   };
 }

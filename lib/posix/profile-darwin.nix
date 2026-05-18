@@ -2,8 +2,12 @@
 # Reads the POSIX shell registry and generates a single /etc/profile
 # with a dynamic guard block dispatching to each shell's rc file.
 #
-# Also replaces runtime path_helper with evaluation-time path reading
-# to preserve Nix path priority and avoid PATH reordering bugs.
+# On macOS, /usr/libexec/path_helper prepends system paths (including
+# /etc/paths.d/* entries) to PATH.  Nix-darwin's set-environment script
+# hardcodes a complete PATH, so anything path_helper added beforehand is
+# clobbered.  We call path_helper at runtime after set-environment and
+# append only the paths that are not already present, preserving Nix
+# path priority while recovering Apple-specific entries.
 {
   config,
   lib,
@@ -38,39 +42,24 @@ let
 
   allGuards = if otherGuards == "" then bashGuard else bashGuard + "\nelif " + otherGuards;
 
-  # ---------------------------------------------------------------------------
-  # path_helper replacement: read system paths at evaluation time
-  # ---------------------------------------------------------------------------
-
-  # Read a file line-by-line, returning a list of non-empty lines
-  readPaths =
-    path:
-    if builtins.pathExists path then
-      lib.filter (l: l != "") (lib.splitString "\n" (builtins.readFile path))
-    else
-      [ ];
-
-  pathsFile = "/etc/paths";
-  pathsDir = "/etc/paths.d";
-  manpathsFile = "/etc/manpaths";
-  manpathsDir = "/etc/manpaths.d";
-
-  pathsDirEntries =
-    if builtins.pathExists pathsDir then builtins.attrNames (builtins.readDir pathsDir) else [ ];
-
-  manpathsDirEntries =
-    if builtins.pathExists manpathsDir then builtins.attrNames (builtins.readDir manpathsDir) else [ ];
-
-  systemPaths =
-    readPaths pathsFile ++ lib.concatMap (f: readPaths (pathsDir + "/" + f)) pathsDirEntries;
-
-  systemManPaths =
-    readPaths manpathsFile ++ lib.concatMap (f: readPaths (manpathsDir + "/" + f)) manpathsDirEntries;
-
-  newPaths = lib.subtractLists config.environment.systemPath systemPaths;
-
-  newManPaths = lib.subtractLists (config.environment.profileRelativeEnvVars.MANPATH or [ ]
-  ) systemManPaths;
+  pathHelperRecovery = ''
+    # Recover Apple-specific paths without prepending them.
+    if [ -x /usr/libexec/path_helper ]; then
+        _nix_path="$PATH"
+        eval $(/usr/libexec/path_helper -s)
+        _new_dirs=""
+        IFS=:
+        for _dir in $PATH; do
+            case ":$_nix_path:" in
+                *:"$_dir":*) ;;
+                *) _new_dirs="$_new_dirs''${_new_dirs:+:}$_dir" ;;
+            esac
+        done
+        unset IFS _dir
+        PATH="$_nix_path''${_new_dirs:+:}$_new_dirs"
+        unset _nix_path _new_dirs
+    fi
+  '';
 in
 {
   imports = [ registry ];
@@ -93,6 +82,8 @@ in
               . ${config.system.build.setEnvironment}
           fi
 
+          ${pathHelperRecovery}
+
           ${config.environment.shellInit}
           ${config.environment.loginShellInit}
 
@@ -106,12 +97,6 @@ in
           fi
         '';
       }
-      (lib.mkIf (newPaths != [ ]) {
-        environment.systemPath = lib.mkAfter newPaths;
-      })
-      (lib.mkIf (newManPaths != [ ]) {
-        environment.profileRelativeEnvVars.MANPATH = lib.mkAfter newManPaths;
-      })
     ]
   );
 }
