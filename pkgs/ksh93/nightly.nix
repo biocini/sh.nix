@@ -8,13 +8,13 @@
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "ksh";
-  version = "unstable-2026-08-06";
+  version = "unstable-2026-08-07";
 
   src = fetchFromGitHub {
     owner = "ksh93";
     repo = "ksh";
-    rev = "c9c2a939dbe3ec2eea3184eefde702db28de1022";
-    hash = "sha256-mdkTaUaXZ043GmrgFxAnVu4VJHMDGlXpflT6MHsFOT4=";
+    rev = "235921b421f0da8e71cb97392b6a2f306c0485d1";
+    hash = "sha256-xL+UhpbFh2EfgvLWnwuwgcioKKGhPh9PTHddbIrNr5U=";
   };
 
   nativeBuildInputs = [
