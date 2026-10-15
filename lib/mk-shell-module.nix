@@ -12,13 +12,18 @@
 #     };
 #   }
 # => { nixosModule, darwinModule, homeManagerModule }
+#
+# Option hooks:
+#   extraOptions        programs.<name>.* on all three platforms
+#   extraSystemOptions  programs.<name>.* on NixOS and nix-darwin only
+#   extraHmOptions      programs.<name>.* on home-manager only
 
 {
   name,
   package ? null,
   extraOptions ? (_: { }),
+  extraSystemOptions ? (_: { }),
   extraHmOptions ? (_: { }),
-  defaults ? { },
   nixosConfig ? (_: { }),
   darwinConfig ? (_: { }),
   hmConfig ? (_: { }),
@@ -30,16 +35,27 @@
 let
   pname = name;
 
-  baseOptions =
+  # Calls an option or config hook with the standard arguments.
+  withArgs =
+    f:
     {
       config,
       lib,
       pkgs,
       ...
     }:
-    let
+    f {
+      inherit config lib pkgs;
       cfg = config.programs.${pname};
-    in
+    };
+
+  baseOptions =
+    args@{
+      config,
+      lib,
+      pkgs,
+      ...
+    }:
     {
       options.programs.${pname} = {
         enable = lib.mkEnableOption "${pname} shell";
@@ -72,18 +88,45 @@ let
           visible = false;
         };
       }
-      // extraOptions {
-        inherit
-          config
-          lib
-          pkgs
-          cfg
-          ;
-      };
+      // withArgs extraOptions args;
+    };
+
+  systemOnlyOptions =
+    args@{
+      config,
+      lib,
+      pkgs,
+      ...
+    }:
+    {
+      options.programs.${pname} = withArgs extraSystemOptions args;
     };
 
   hmOnlyOptions =
+    args@{
+      config,
+      lib,
+      pkgs,
+      ...
+    }:
     {
+      options.programs.${pname} = withArgs extraHmOptions args;
+    };
+
+  mkFiles = args: files: args.lib.mapAttrs (_: v: { text = withArgs v.content args; }) files;
+
+  # NixOS and nix-darwin modules differ only in their flags, platform
+  # config and /etc files.
+  mkSystemModule =
+    {
+      platform,
+      loadedFlag,
+      conflictFlag,
+      conflictPlatform,
+      platformConfig,
+      files,
+    }:
+    args@{
       config,
       lib,
       pkgs,
@@ -93,122 +136,49 @@ let
       cfg = config.programs.${pname};
     in
     {
-      options.programs.${pname} = extraHmOptions {
-        inherit
-          config
-          lib
-          pkgs
-          cfg
-          ;
-      };
+      imports = [
+        baseOptions
+        systemOnlyOptions
+      ];
+      config = lib.mkIf cfg.enable (
+        lib.mkMerge [
+          {
+            environment.systemPackages = [ cfg.package ];
+            assertions = [
+              {
+                assertion = !cfg.${conflictFlag};
+                message = "programs.${pname}: ${platform} cannot be used together with ${conflictPlatform}";
+              }
+            ];
+            programs.${pname}.${loadedFlag} = true;
+          }
+          (withArgs platformConfig args)
+          (lib.mkIf (files != { }) { environment.etc = mkFiles args files; })
+        ]
+      );
     };
-
 in
 {
-  nixosModule =
-    {
-      config,
-      lib,
-      pkgs,
-      ...
-    }:
-    let
-      cfg = config.programs.${pname};
-    in
-    {
-      imports = [ baseOptions ];
-      config = lib.mkIf cfg.enable (
-        lib.mkMerge [
-          {
-            environment.systemPackages = [ cfg.package ];
-            assertions = [
-              {
-                assertion = !cfg._darwinModuleLoaded;
-                message = "programs.${pname}: nixosModule cannot be used together with darwinModule";
-              }
-            ];
-            programs.${pname} = {
-              _nixosModuleLoaded = true;
-            }
-            // defaults;
-          }
-          (nixosConfig {
-            inherit
-              config
-              lib
-              pkgs
-              cfg
-              ;
-          })
-          (lib.mkIf (nixosFiles != { }) {
-            environment.etc = lib.mapAttrs (n: v: {
-              text = v.content {
-                inherit
-                  config
-                  lib
-                  pkgs
-                  cfg
-                  ;
-              };
-            }) nixosFiles;
-          })
-        ]
-      );
-    };
+  nixosModule = mkSystemModule {
+    platform = "nixosModule";
+    loadedFlag = "_nixosModuleLoaded";
+    conflictFlag = "_darwinModuleLoaded";
+    conflictPlatform = "darwinModule";
+    platformConfig = nixosConfig;
+    files = nixosFiles;
+  };
 
-  darwinModule =
-    {
-      config,
-      lib,
-      pkgs,
-      ...
-    }:
-    let
-      cfg = config.programs.${pname};
-    in
-    {
-      imports = [ baseOptions ];
-      config = lib.mkIf cfg.enable (
-        lib.mkMerge [
-          {
-            environment.systemPackages = [ cfg.package ];
-            assertions = [
-              {
-                assertion = !cfg._nixosModuleLoaded;
-                message = "programs.${pname}: darwinModule cannot be used together with nixosModule";
-              }
-            ];
-            programs.${pname} = {
-              _darwinModuleLoaded = true;
-            }
-            // defaults;
-          }
-          (darwinConfig {
-            inherit
-              config
-              lib
-              pkgs
-              cfg
-              ;
-          })
-          (lib.mkIf (darwinFiles != { }) {
-            environment.etc = lib.mapAttrs (n: v: {
-              text = v.content {
-                inherit
-                  config
-                  lib
-                  pkgs
-                  cfg
-                  ;
-              };
-            }) darwinFiles;
-          })
-        ]
-      );
-    };
+  darwinModule = mkSystemModule {
+    platform = "darwinModule";
+    loadedFlag = "_darwinModuleLoaded";
+    conflictFlag = "_nixosModuleLoaded";
+    conflictPlatform = "nixosModule";
+    platformConfig = darwinConfig;
+    files = darwinFiles;
+  };
 
   homeManagerModule =
-    {
+    args@{
       config,
       lib,
       pkgs,
@@ -226,31 +196,10 @@ in
         lib.mkMerge [
           {
             home.packages = [ cfg.package ];
-            programs.${pname} = {
-              _homeManagerModuleLoaded = true;
-            }
-            // defaults;
+            programs.${pname}._homeManagerModuleLoaded = true;
           }
-          (hmConfig {
-            inherit
-              config
-              lib
-              pkgs
-              cfg
-              ;
-          })
-          (lib.mkIf (hmFiles != { }) {
-            home.file = lib.mapAttrs (n: v: {
-              text = v.content {
-                inherit
-                  config
-                  lib
-                  pkgs
-                  cfg
-                  ;
-              };
-            }) hmFiles;
-          })
+          (withArgs hmConfig args)
+          (lib.mkIf (hmFiles != { }) { home.file = mkFiles args hmFiles; })
         ]
       );
     };

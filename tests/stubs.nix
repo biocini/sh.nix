@@ -13,6 +13,7 @@
           lib.types.oneOf [
             lib.types.str
             lib.types.int
+            (lib.types.listOf lib.types.str)
           ]
         );
         default = { };
@@ -22,7 +23,7 @@
         default = { };
       };
       environment.shellAliases = lib.mkOption {
-        type = lib.types.attrsOf lib.types.str;
+        type = lib.types.attrsOf (lib.types.nullOr lib.types.str);
         default = { };
       };
       environment.shellInit = lib.mkOption {
@@ -104,6 +105,14 @@
           text = "";
           executable = true;
         };
+      };
+      programs.bash.enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+      };
+      programs.bash.profileExtra = lib.mkOption {
+        type = lib.types.lines;
+        default = "";
       };
       home.username = lib.mkOption {
         type = lib.types.str;

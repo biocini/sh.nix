@@ -6,26 +6,38 @@ let
   pkgs = nixpkgs.legacyPackages.${system};
   stubs = import ./stubs.nix { inherit pkgs lib; };
 
-  evalNixos =
-    modules:
-    lib.evalModules {
-      inherit modules;
-      specialArgs = { inherit pkgs; };
-    };
+  # pkgs comes from _module.args, as in NixOS, nix-darwin and home-manager:
+  # a module receives it only when its argument pattern names it.
+  evalModules = modules: lib.evalModules { modules = modules ++ [ { _module.args.pkgs = pkgs; } ]; };
+  evalNixos = evalModules;
+  evalDarwin = evalModules;
+  evalHm = evalModules;
 
-  evalDarwin =
-    modules:
-    lib.evalModules {
-      inherit modules;
-      specialArgs = { inherit pkgs; };
-    };
+  # Evaluated config for one module and extra settings.
+  nixosCfg =
+    module: extra:
+    (evalNixos [
+      stubs.nixos
+      module
+      extra
+    ]).config;
+  darwinCfg =
+    module: extra:
+    (evalDarwin [
+      stubs.nixos
+      module
+      extra
+    ]).config;
+  hmCfg =
+    module: extra:
+    (evalHm [
+      stubs.homeManager
+      module
+      extra
+    ]).config;
 
-  evalHm =
-    modules:
-    lib.evalModules {
-      inherit modules;
-      specialArgs = { inherit pkgs; };
-    };
+  kshrcOn = cfg: cfg.environment.etc.kshrc.text;
+  rcrcOn = cfg: cfg.environment.etc.rcrc.text;
 in
 # nix-unit only discovers attributes whose names start with "test"
 lib.mapAttrs'
@@ -77,7 +89,7 @@ lib.mapAttrs'
           overlayed = self.overlays.default pkgs pkgs;
         in
         overlayed.rc.version;
-      expected = "unstable-2026-04-24";
+      expected = (import ../pkgs/rc/nightly.nix { inherit (pkgs) fetchFromGitHub; }).version;
     };
 
     "nixos module produces /etc/kshrc" = {
@@ -192,18 +204,10 @@ lib.mapAttrs'
       expected = [ "a3fe9f414586c0d3cacbe3b6920a09d8718e503bca22e23fef882203bf765065" ];
     };
 
-    "darwin module sets LANG" = {
+    "darwin module does not set LANG" = {
       expr =
-        let
-          cfg =
-            (evalDarwin [
-              stubs.nixos
-              self.darwinModules.ksh
-              { programs.ksh.enable = true; }
-            ]).config;
-        in
-        cfg.environment.variables.LANG or null == "C.UTF-8";
-      expected = true;
+        (darwinCfg self.darwinModules.ksh { programs.ksh.enable = true; }).environment.variables ? LANG;
+      expected = false;
     };
 
     "darwin module does not set global ENV" = {
@@ -286,7 +290,7 @@ lib.mapAttrs'
               { programs.ksh.enable = true; }
             ]).config;
         in
-        lib.hasInfix ''PS1="''${USER}@''${HOSTNAME}:''${PWD}$ "'' cfg.environment.etc.kshrc.text;
+        lib.hasInfix "PS1='$USER@'" cfg.environment.etc.kshrc.text;
       expected = true;
     };
 
@@ -477,24 +481,31 @@ lib.mapAttrs'
               }
             ]).config;
         in
-        lib.hasInfix "fn ll { ls -l }" cfg.environment.etc.rcrc.text;
+        lib.hasInfix "fn ll { ls -l $* }" cfg.environment.etc.rcrc.text;
       expected = true;
     };
 
-    "rc nixos module bridges environment.interactiveShellInit" = {
-      expr =
-        let
-          cfg =
-            (evalNixos [
-              stubs.nixos
-              self.nixosModules.rc
-              {
-                programs.rc.enable = true;
-                environment.interactiveShellInit = "echo hello";
-              }
-            ]).config;
-        in
-        lib.hasInfix "echo hello" cfg.environment.etc.rcrc.text;
+    "rc system module does not copy POSIX interactiveShellInit" = {
+      expr = lib.hasInfix "posix-only" (
+        rcrcOn (
+          nixosCfg self.nixosModules.rc {
+            programs.rc.enable = true;
+            environment.interactiveShellInit = "posix-only";
+          }
+        )
+      );
+      expected = false;
+    };
+
+    "rc loginShellInit goes to /etc/rcrc" = {
+      expr = lib.hasInfix "echo hello" (
+        rcrcOn (
+          darwinCfg self.darwinModules.rc {
+            programs.rc.enable = true;
+            programs.rc.loginShellInit = "echo hello";
+          }
+        )
+      );
       expected = true;
     };
 
@@ -511,7 +522,7 @@ lib.mapAttrs'
               }
             ]).config;
         in
-        lib.hasInfix "EDITOR = vim" cfg.environment.etc.rcrc.text;
+        lib.hasInfix "EDITOR = 'vim'" cfg.environment.etc.rcrc.text;
       expected = true;
     };
 
@@ -528,7 +539,7 @@ lib.mapAttrs'
               }
             ]).config;
         in
-        lib.hasInfix "fn ll { ls -l }" cfg.home.file.".rcrc".text;
+        lib.hasInfix "fn ll { ls -l $* }" cfg.home.file.".rcrc".text;
       expected = true;
     };
 
@@ -545,7 +556,7 @@ lib.mapAttrs'
               }
             ]).config;
         in
-        lib.hasInfix "EDITOR = vim" cfg.home.file.".rcrc".text;
+        lib.hasInfix "EDITOR = 'vim'" cfg.home.file.".rcrc".text;
       expected = true;
     };
 
@@ -578,5 +589,209 @@ lib.mapAttrs'
         in
         lib.any (a: !a.assertion) cfg.assertions;
       expected = true;
+    };
+    "fallback guard tests the shell version variable" = {
+      expr =
+        (nixosCfg (self.lib.mkPosixShellModule { name = "oksh"; }).nixosModule {
+          programs.oksh.enable = true;
+          programs.oksh.package = pkgs.hello;
+        })._shnix.posixShells.oksh.guard;
+      expected = ''[ -n "''${OKSH_VERSION:-}" ]'';
+    };
+
+    "kshrc returns early in other shells" = {
+      expr = lib.hasInfix ''[ -n "''${KSH_VERSION:-}" ] || return'' (
+        kshrcOn (darwinCfg self.darwinModules.ksh { programs.ksh.enable = true; })
+      );
+      expected = true;
+    };
+
+    "home-manager kshrc returns early in other shells" = {
+      expr =
+        lib.hasInfix ''[ -n "''${KSH_VERSION:-}" ] || return''
+          (hmCfg self.homeManagerModules.ksh { programs.ksh.enable = true; }).home.file.".kshrc".text;
+      expected = true;
+    };
+
+    "kshrc does not set noclobber" = {
+      expr = lib.hasInfix "noclobber" (
+        kshrcOn (nixosCfg self.nixosModules.ksh { programs.ksh.enable = true; })
+      );
+      expected = false;
+    };
+
+    "darwin kshrc writes programs.ksh.shellAliases" = {
+      expr = lib.hasInfix "alias -- ll='ls -l'" (
+        kshrcOn (
+          darwinCfg self.darwinModules.ksh {
+            programs.ksh.enable = true;
+            programs.ksh.shellAliases.ll = "ls -l";
+          }
+        )
+      );
+      expected = true;
+    };
+
+    "darwin kshrc bridges environment.shellAliases" = {
+      expr =
+        let
+          text = kshrcOn (
+            darwinCfg self.darwinModules.ksh {
+              programs.ksh.enable = true;
+              environment.shellAliases = {
+                la = "ls -a";
+                nulled = null;
+              };
+            }
+          );
+        in
+        lib.hasInfix "alias -- la='ls -a'" text && !(lib.hasInfix "nulled" text);
+      expected = true;
+    };
+
+    "ksh shellOptions reach the system kshrc" = {
+      expr = lib.hasInfix "set -o vi" (
+        kshrcOn (
+          darwinCfg self.darwinModules.ksh {
+            programs.ksh.enable = true;
+            programs.ksh.shellOptions = [ "vi" ];
+          }
+        )
+      );
+      expected = true;
+    };
+
+    "ksh functionsDir reaches the home-manager kshrc" = {
+      expr =
+        lib.hasInfix ''export FPATH="$HOME/.func''${FPATH:+:$FPATH}"''
+          (hmCfg self.homeManagerModules.ksh {
+            programs.ksh.enable = true;
+            programs.ksh.functionsDir = "$HOME/.func";
+          }).home.file.".kshrc".text;
+      expected = true;
+    };
+
+    "system and home-manager options are separate" = {
+      expr =
+        let
+          sys =
+            (evalNixos [
+              stubs.nixos
+              self.nixosModules.ksh
+            ]).options.programs.ksh;
+          hm =
+            (evalHm [
+              stubs.homeManager
+              self.homeManagerModules.ksh
+            ]).options.programs.ksh;
+        in
+        {
+          sysInitExtra = sys ? initExtra;
+          sysInteractive = sys ? interactiveShellInit;
+          hmInitExtra = hm ? initExtra;
+          hmInteractive = hm ? interactiveShellInit;
+        };
+      expected = {
+        sysInitExtra = false;
+        sysInteractive = true;
+        hmInitExtra = true;
+        hmInteractive = false;
+      };
+    };
+
+    "home-manager ~/.profile guards ksh login code" = {
+      expr =
+        let
+          text =
+            (hmCfg self.homeManagerModules.ksh {
+              programs.ksh.enable = true;
+              programs.ksh.sessionVariables.FOO = "bar";
+            }).home.file.".profile".text;
+        in
+        lib.hasInfix ''if [ -n "''${KSH_VERSION:-}" ]; then'' text && lib.hasInfix "export FOO=bar" text;
+      expected = true;
+    };
+
+    "home-manager bash receives ksh login code" = {
+      expr =
+        let
+          cfg = hmCfg self.homeManagerModules.ksh {
+            programs.ksh.enable = true;
+            programs.ksh.profileExtra = "echo ksh-login";
+            programs.bash.enable = true;
+          };
+        in
+        {
+          ownProfile = cfg.home.file ? ".profile";
+          inBash = lib.hasInfix "echo ksh-login" cfg.programs.bash.profileExtra;
+        };
+      expected = {
+        ownProfile = false;
+        inBash = true;
+      };
+    };
+
+    "rc darwin module accepts list variables" = {
+      expr = lib.hasInfix "XDG_DATA_DIRS = '/a:/b'" (
+        rcrcOn (
+          darwinCfg self.darwinModules.rc {
+            programs.rc.enable = true;
+            environment.variables.XDG_DATA_DIRS = [
+              "/a"
+              "/b"
+            ];
+          }
+        )
+      );
+      expected = true;
+    };
+
+    "rc variables expand references at runtime" = {
+      expr = lib.hasInfix "P = '/etc/profiles/per-user/'^$\"USER^'/bin'\n" (
+        rcrcOn (
+          nixosCfg self.nixosModules.rc {
+            programs.rc.enable = true;
+            environment.variables.P = "/etc/profiles/per-user/\${USER}/bin";
+          }
+        )
+      );
+      expected = true;
+    };
+
+    "rc quotes single quotes by doubling" = {
+      expr = lib.hasInfix "Q = 'it''s'" (
+        rcrcOn (
+          nixosCfg self.nixosModules.rc {
+            programs.rc.enable = true;
+            programs.rc.sessionVariables.Q = "it's";
+          }
+        )
+      );
+      expected = true;
+    };
+
+    "rc history file is relative to $home" = {
+      expr =
+        let
+          text =
+            extra:
+            rcrcOn
+              (evalNixos [
+                stubs.nixos
+                self.nixosModules.rc
+                { programs.rc.enable = true; }
+                extra
+              ]).config;
+        in
+        {
+          default = lib.hasInfix "history=$home/'.rc_history'" (text { });
+          absolute = lib.hasInfix "history='/var/h'" (text {
+            programs.rc.historyFile = "/var/h";
+          });
+        };
+      expected = {
+        default = true;
+        absolute = true;
+      };
     };
   }

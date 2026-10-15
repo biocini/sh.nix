@@ -1,41 +1,35 @@
 # Pure data extraction from global environment configuration.
 # No mkDefault, no option names, no shell assumptions.
+#
+# shellAliases: null (unset) entries are dropped and values are strings.
+# loginShellInit is not bridged: the unified /etc/profile reads
+# environment.loginShellInit directly.
+let
+  aliases =
+    a:
+    builtins.mapAttrs (_: toString) (
+      builtins.removeAttrs a (builtins.filter (n: a.${n} == null) (builtins.attrNames a))
+    );
+
+  system =
+    { config }:
+    {
+      inherit (config.environment) shellInit interactiveShellInit variables;
+      shellAliases = aliases config.environment.shellAliases;
+    };
+in
 {
   # NixOS platform: extracts from config.environment.*
-  nixos =
-    { config }:
-    {
-      inherit (config.environment)
-        shellAliases
-        shellInit
-        interactiveShellInit
-        variables
-        ;
-      # Note: loginShellInit is handled by the unified profile generator
-      # directly (unconditional in /etc/profile), not per-shell.
-    };
+  nixos = system;
 
   # nix-darwin platform: same structure as NixOS
-  darwin =
-    { config }:
-    {
-      inherit (config.environment)
-        shellAliases
-        shellInit
-        interactiveShellInit
-        variables
-        ;
-      # Note: loginShellInit is handled by the unified profile generator
-      # directly (unconditional in /etc/profile), not per-shell.
-    };
+  darwin = system;
 
   # home-manager platform: extracts from config.home.*
   homeManager =
     { config }:
     {
-      inherit (config.home)
-        shellAliases
-        sessionVariables
-        ;
+      inherit (config.home) sessionVariables;
+      shellAliases = aliases config.home.shellAliases;
     };
 }

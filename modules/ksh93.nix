@@ -2,10 +2,24 @@
 # of the POSIX shell base.  Import this alongside the platform-specific base
 # module (nixosModule / darwinModule / homeManagerModule).
 
-{ config, lib, ... }:
+{
+  config,
+  lib,
+  options,
+  ...
+}:
 
 let
   cfg = config.programs.ksh;
+
+  initLines = lib.concatStringsSep "\n" (
+    map (o: "set -o ${o}") cfg.shellOptions
+    ++ lib.optional (cfg.functionsDir != null) ''export FPATH="${cfg.functionsDir}''${FPATH:+:$FPATH}"''
+  );
+
+  # Interactive init goes to initExtra on home-manager and to
+  # interactiveShellInit on NixOS and nix-darwin.
+  initOption = if options.programs.ksh ? initExtra then "initExtra" else "interactiveShellInit";
 in
 
 {
@@ -19,20 +33,12 @@ in
     functionsDir = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      description = "Directory for autoload functions (sets FPATH).";
+      description = "Directory for autoload functions (prepended to FPATH).";
     };
   };
 
   config.programs.ksh = {
     histSize = lib.mkDefault 10000;
-
-    initExtra = lib.mkIf cfg.enable (
-      lib.mkAfter ''
-        ${lib.concatMapStringsSep "\n" (o: "set -o ${o}") cfg.shellOptions}
-        ${lib.optionalString (cfg.functionsDir != null) ''
-          export FPATH=${cfg.functionsDir}''${FPATH:+:$FPATH}
-        ''}
-      ''
-    );
+    ${initOption} = lib.mkIf (cfg.enable && initLines != "") (lib.mkAfter initLines);
   };
 }

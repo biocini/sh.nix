@@ -7,7 +7,7 @@
       histFile = lib.mkOption {
         type = lib.types.str;
         default = "$HOME/.${name}_history";
-        description = "Path to the history file. Evaluated at shell runtime.";
+        description = "Path to the history file. Parameter expansion occurs at shell runtime.";
       };
 
       histSize = lib.mkOption {
@@ -21,26 +21,18 @@
         default = { };
         description = "Aliases to define in interactive shells.";
       };
+    };
 
-      initExtra = lib.mkOption {
-        type = lib.types.lines;
-        default = "";
-        description = "Additional commands for interactive shell init.";
-      };
-
-      shellInit = lib.mkOption {
-        type = lib.types.lines;
-        default = "";
-        internal = true;
-        visible = false;
-      };
-
+  # NixOS and nix-darwin POSIX options
+  systemOptions =
+    { lib, ... }:
+    {
       loginShellInit = lib.mkOption {
         type = lib.types.lines;
         default = "";
         description = ''
           Shell script code called during login shell initialisation.
-          This runs only when this shell is the login shell.
+          This runs in /etc/profile only when this shell is the login shell.
         '';
       };
 
@@ -49,7 +41,7 @@
         default = "";
         description = ''
           Shell script code called during interactive shell initialisation.
-          This runs in the shell's rc file after the interactive guard.
+          This runs in the system rc file after the interactive guard.
         '';
       };
     };
@@ -58,10 +50,19 @@
   hmOptions =
     { lib, ... }:
     {
+      initExtra = lib.mkOption {
+        type = lib.types.lines;
+        default = "";
+        description = "Additional commands for interactive shell init.";
+      };
+
       profileExtra = lib.mkOption {
         type = lib.types.lines;
         default = "";
-        description = "Additional commands for login shell init.";
+        description = ''
+          Additional commands for login shell init. They run in ~/.profile
+          only when this shell reads it.
+        '';
       };
 
       sessionVariables = lib.mkOption {
@@ -73,7 +74,10 @@
           ]
         );
         default = { };
-        description = "Environment variables to export at login.";
+        description = ''
+          Environment variables to export at login. They are exported in
+          ~/.profile only when this shell reads it.
+        '';
       };
 
       logoutExtra = lib.mkOption {

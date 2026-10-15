@@ -21,49 +21,44 @@
 
 let
   envBridge = import ./env-bridge.nix;
-  posOpts = import ./posix/options.nix;
-  posCfgs = import ./posix/configs.nix { inherit envBridge; };
-  posFiles = import ./posix/files.nix;
   guards = import ./posix/guards.nix;
+  posOpts = import ./posix/options.nix;
+  posCfgs = import ./posix/configs.nix { inherit envBridge guards; };
+  posFiles = import ./posix/files.nix { inherit guards; };
 
   # Module that registers this shell in the unified profile generator
   shellRegistration =
     { config, lib, ... }:
     {
       config._shnix.posixShells.${name} = lib.mkIf config.programs.${name}.enable {
-        guard = guards.${name} or ''[ -n "$${lib.toUpper name}_VERSION" ]'';
+        guard = guards.guardFor lib name;
         rcFile = "/etc/${etcRcPath}";
         priority = 100;
       };
     };
+
+  systemFiles = {
+    ${etcRcPath} = {
+      content = posFiles.systemRc { inherit name etcRcPath homeRcPath; };
+    };
+  };
 
   # Base modules without profile generation (rc files only)
   base = import ./mk-shell-module.nix {
     inherit name;
 
     extraOptions = posOpts.posixOptions { inherit name; };
+    extraSystemOptions = posOpts.systemOptions;
     extraHmOptions = posOpts.hmOptions;
 
     nixosConfig = posCfgs.nixos { inherit name; };
     darwinConfig = posCfgs.darwin { inherit name; };
     hmConfig = posCfgs.hm { inherit name; };
 
-    nixosFiles = {
-      ${etcRcPath} = {
-        content = posFiles.nixosRc { inherit name etcRcPath homeRcPath; };
-      };
-    };
-
-    darwinFiles = {
-      ${etcRcPath} = {
-        content = posFiles.darwinRc { inherit name etcRcPath homeRcPath; };
-      };
-    };
+    nixosFiles = systemFiles;
+    darwinFiles = systemFiles;
 
     hmFiles = {
-      ".profile" = {
-        content = posFiles.hmProfile { inherit name; };
-      };
       ${homeRcPath} = {
         content = posFiles.hmRc { inherit name homeRcPath; };
       };

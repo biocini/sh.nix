@@ -1,6 +1,6 @@
 # Unified /etc/profile generator for NixOS.
 # Reads the POSIX shell registry and generates a single /etc/profile
-# with a dynamic guard block dispatching to each shell's rc file.
+# with a guard chain that dispatches to each shell's rc file.
 {
   config,
   lib,
@@ -12,28 +12,7 @@ let
   # Import registry to ensure _shnix.posixShells option is declared
   registry = import ./registry.nix;
 
-  # Build a sorted list of registered shells (name -> shell attrs)
-  shellList = lib.mapAttrsToList (name: shell: shell // { inherit name; }) config._shnix.posixShells;
-  sortedShells = lib.sort (a: b: a.priority < b.priority) shellList;
-
-  # Bash guard — always included for compatibility with upstream programs.bash
-  bashGuard = ''
-    if [ -n "''${BASH_VERSION:-}" ]; then
-      ${config.programs.bash.loginShellInit or ""}
-      [ -r /etc/bashrc ] && . /etc/bashrc
-  '';
-
-  # Generate guard block for a single registered shell
-  makeGuard = shell: ''
-    ${shell.guard}; then
-      export ENV=${shell.rcFile}
-      ${config.programs.${shell.name}.loginShellInit or ""}
-      [ -r ${shell.rcFile} ] && . ${shell.rcFile}
-  '';
-
-  otherGuards = lib.concatStringsSep "\nelif " (map makeGuard sortedShells);
-
-  allGuards = if otherGuards == "" then bashGuard else bashGuard + "\nelif " + otherGuards;
+  dispatch = import ./dispatch.nix { inherit config lib; };
 in
 {
   imports = [ registry ];
@@ -63,8 +42,7 @@ in
       fi
 
       # Dispatch to shell-specific rc
-      ${allGuards}
-      fi
+      ${dispatch}
     '';
   };
 }
