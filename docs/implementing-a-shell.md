@@ -1,75 +1,85 @@
 # Implementing a Shell Module with sh.nix
 
-This guide shows how to add first-class NixOS / nix-darwin / home-manager support for a new shell using sh.nix's composable abstractions.
+This guide shows how to make NixOS, nix-darwin and home-manager modules for a shell with the sh.nix library.
 
-## The Decision Tree
+## Select the approach
 
-The first question is: **Is your shell POSIX-compatible?**
+| Shell family  | Approach                      | Examples        |
+| ------------- | ----------------------------- | --------------- |
+| **POSIX**     | `mkPosixShellModule`          | ksh, mksh, yash |
+| **Non-POSIX** | `mkShellModule` + `envBridge` | rc, fish, elvish |
 
-| Shell Family  | Approach                      | Examples                   |
-| ------------- | ----------------------------- | -------------------------- |
-| **POSIX**     | `mkPosixShellModule`          | ksh, bash, yash, dash, zsh |
-| **Non-POSIX** | `mkShellModule` + `envBridge` | rc, fish, xonsh, elvish    |
+Use `mkPosixShellModule` for a shell that does all of these:
 
-POSIX shells share a common model: `/etc/profile` for login shells, `$ENV` pointing to an rc file for interactive shells, `export` for env vars, `alias` for aliases. If your shell fits this model, use `mkPosixShellModule`.
+- It reads `/etc/profile` and `~/.profile` as a login shell.
+- It reads the file in `$ENV` as an interactive shell.
+- It accepts POSIX `sh` syntax for `export`, `alias`, `case`, `[ ]` and `return` in a sourced file.
 
-Non-POSIX shells have their own config syntax, file locations, and semantics. They compose the lower-level building blocks directly.
+Do not use `mkPosixShellModule` for bash or zsh. NixOS, nix-darwin and home-manager have their own modules for these shells.
 
 ---
 
-## Case 1: POSIX Shell (the easy way)
-
-If your shell understands POSIX `sh` syntax and uses the standard profile/rc model:
+## Case 1: POSIX shell
 
 ```nix
-# modules/mysh.nix
+# modules/mysh-base.nix
 { shnixLib }:
 
 shnixLib.mkPosixShellModule {
-  name = "mysh";           # sets programs.mysh namespace
+  name = "mysh";           # sets the programs.mysh namespace
   etcRcPath = "myshrc";    # /etc/myshrc
   homeRcPath = ".myshrc";  # ~/.myshrc
 }
 ```
 
-That's it. You get:
+The modules have the POSIX options in the [README](../README.md#options). They also do these steps:
 
-- `programs.mysh.enable`, `programs.mysh.package`
-- `programs.mysh.shellAliases`, `programs.mysh.initExtra`
-- `programs.mysh.histFile`, `programs.mysh.histSize`
-- Automatic bridge from `environment.shellAliases` (NixOS/darwin) and `home.shellAliases` (HM)
-- `/etc/profile`, `/etc/myshrc`, `~/.profile`, `~/.myshrc` generation
+- They write `/etc/myshrc` (NixOS, nix-darwin), `~/.myshrc` and `~/.profile` (home-manager).
+- They register the shell in the `/etc/profile` guard chain.
+- They bridge `environment.shellAliases` or `home.shellAliases` to `programs.mysh.shellAliases`.
+- They bridge `environment.interactiveShellInit` to `programs.mysh.interactiveShellInit`.
 
-### Adding shell-specific options
+### Guard
 
-If your shell has unique options beyond the POSIX baseline, layer them on top:
+`/etc/profile` uses a guard to find the running shell. The rc files use the same guard and return immediately in other shells. Known guards are in `lib/posix/guards.nix`:
 
 ```nix
-# modules/mysh-extra.nix
-{ config, lib, ... }:
+known = {
+  ksh = ''[ -n "''${KSH_VERSION:-}" ]'';
+  yash = ''[ -n "''${YASH_VERSION:-}" ]'';
+  # ...
+};
+```
 
-let cfg = config.programs.mysh; in
+A name that is not in `known` gets `[ -n "${<NAME>_VERSION:-}" ]`. If the shell does not set this variable, add an entry to `known`. Without a correct guard, `/etc/profile` does not source the rc file of the shell.
+
+### Shell-specific options
+
+Put options for one shell in a separate module. On NixOS and nix-darwin, interactive code goes into `interactiveShellInit`. On home-manager, it goes into `initExtra`. Use the `options` argument to select the option:
+
+```nix
+# modules/mysh.nix
+{ config, lib, options, ... }:
+
+let
+  cfg = config.programs.mysh;
+  initOption = if options.programs.mysh ? initExtra then "initExtra" else "interactiveShellInit";
+in
 {
-  options.programs.mysh = {
-    viMode = lib.mkEnableOption "vi line editing";
-    customOption = lib.mkOption { type = lib.types.str; default = ""; };
-  };
+  options.programs.mysh.viMode = lib.mkEnableOption "vi line editing";
 
-  config.programs.mysh = lib.mkIf cfg.enable {
-    initExtra = lib.mkAfter ''
-      ${lib.optionalString cfg.viMode "set -o vi"}
-      ${lib.optionalString (cfg.customOption != "") "echo ${lib.escapeShellArg cfg.customOption}"}
-    '';
-  };
+  config.programs.mysh.${initOption} = lib.mkIf (cfg.enable && cfg.viMode) (
+    lib.mkAfter "set -o vi"
+  );
 }
 ```
 
-Then compose in `flake.nix`:
+### flake.nix
 
 ```nix
 let
-  myshBase = import ./modules/mysh.nix { inherit shnixLib; };
-  myshExtra = import ./modules/mysh-extra.nix;
+  myshBase = import ./modules/mysh-base.nix { shnixLib = self.lib; };
+  myshExtra = import ./modules/mysh.nix;
 in
 {
   nixosModules.mysh = { ... }: { imports = [ myshBase.nixosModule myshExtra ]; };
@@ -78,324 +88,127 @@ in
 }
 ```
 
+Import the result of `mkPosixShellModule` from a separate file. If you call it inline in `flake.nix`, the module system cannot identify the modules, and an import of two modules gives "option already declared" errors.
+
 ---
 
-## Case 2: Non-POSIX Shell (the composable way)
+## Case 2: Non-POSIX shell
 
-Non-POSIX shells use `mkShellModule` directly and compose it with `envBridge` for environment integration. You define your own options, your own file generators, and your own config bridges.
+A non-POSIX shell uses `mkShellModule`. The module author supplies the options, the platform config and the file generators. `modules/rc.nix` is the reference implementation.
 
-### Step 1: Import envBridge
+### envBridge
 
-```nix
-let
-  envBridge = import ../lib/env-bridge.nix;
-in
-```
-
-`envBridge` extracts global environment config into plain attrsets:
+`envBridge` returns the global environment configuration as plain data:
 
 ```nix
-# NixOS / nix-darwin
 envBridge.nixos { inherit config; }
-# => { shellAliases = { ... }; variables = { ... }; shellInit = "..."; loginShellInit = "..."; interactiveShellInit = "..."; }
+# => { shellAliases, shellInit, interactiveShellInit, variables }
 
-# Home-manager
 envBridge.homeManager { inherit config; }
-# => { shellAliases = { ... }; sessionVariables = { ... }; }
+# => { shellAliases, sessionVariables }
 ```
 
-### Step 2: Declare your options
+Use `envBridge` for all global environment data. Do not read `config.environment.*` or `config.home.*` directly.
+
+`shellInit` and `interactiveShellInit` contain POSIX shell code. Do not copy them into the configuration of a non-POSIX shell. Give the shell its own option for code in its own syntax.
+
+`variables` can contain lists on NixOS and nix-darwin. nix-darwin always sets `XDG_CONFIG_DIRS` and `XDG_DATA_DIRS` as lists. A variable option must accept lists, or the module must convert them.
+
+### Options
+
+`mkShellModule` has three option hooks:
+
+| Hook                 | Platforms           |
+| -------------------- | ------------------- |
+| `extraOptions`       | all                 |
+| `extraSystemOptions` | NixOS, nix-darwin   |
+| `extraHmOptions`     | home-manager        |
 
 ```nix
 extraOptions = { lib, ... }: {
-  # rc-specific options
-  historyFile = lib.mkOption {
-    type = lib.types.str;
-    default = "$home/.rc_history";
-    description = "Path to the history file.";
-  };
-
-  prompt = lib.mkOption {
-    type = lib.types.listOf lib.types.str;
-    default = [ "; " "" ];
-    description = "The two rc prompts as a list.";
-  };
-
-  # Common options that most shells want
   shellAliases = lib.mkOption {
     type = lib.types.attrsOf lib.types.str;
     default = { };
-    description = "Functions to define (rc uses fn, not alias).";
   };
+};
 
-  sessionVariables = lib.mkOption {
-    type = lib.types.attrsOf (lib.types.oneOf [ lib.types.str lib.types.int lib.types.path ]);
-    default = { };
-    description = "Environment variables to set.";
-  };
+extraSystemOptions = { lib, ... }: {
+  loginShellInit = lib.mkOption { type = lib.types.lines; default = ""; };
+};
 
-  initExtra = lib.mkOption {
-    type = lib.types.lines;
-    default = "";
-    description = "Additional commands for shell init.";
-  };
+extraHmOptions = { lib, ... }: {
+  initExtra = lib.mkOption { type = lib.types.lines; default = ""; };
 };
 ```
 
-### Step 3: Wire the environment bridge
+### Config
 
-Map global environment config to your shell-specific options:
+Each config function receives `{ config, lib, pkgs, cfg }`. `cfg` is `config.programs.<name>`. Set bridged values with `lib.mkDefault`, so that a value in `programs.<name>` replaces them:
 
 ```nix
-nixosConfig = { config, lib, ... }:
+nixosConfig = { config, lib, cfg, ... }:
   let env = envBridge.nixos { inherit config; }; in
   {
-    programs.rc = {
-      shellAliases = lib.mkDefault env.shellAliases;
-      initExtra = lib.mkDefault env.interactiveShellInit;
-      sessionVariables = lib.mkDefault env.variables;
-    };
-  };
-
-darwinConfig = { config, lib, ... }:
-  let env = envBridge.darwin { inherit config; }; in
-  {
-    programs.rc = {
-      shellAliases = lib.mkDefault env.shellAliases;
-      initExtra = lib.mkDefault env.interactiveShellInit;
-      sessionVariables = lib.mkDefault env.variables;
-    };
-  };
-
-hmConfig = { config, lib, ... }:
-  let env = envBridge.homeManager { inherit config; }; in
-  {
-    programs.rc = {
-      shellAliases = lib.mkDefault env.shellAliases;
-      sessionVariables = lib.mkDefault env.sessionVariables;
-    };
+    environment.shells = [ "${cfg.package}/bin/rc" ];
+    programs.rc.shellAliases = lib.mkDefault env.shellAliases;
   };
 ```
 
-### Step 4: Write file generators
+`mkShellModule` installs `cfg.package` on all platforms.
 
-File generators are functions that receive `{ lib, cfg, config, ... }` and return a string of shell-native config:
+### Files
+
+`nixosFiles` and `darwinFiles` write files in `/etc`. `hmFiles` writes files in `$HOME`. The name of each entry is the path, relative to `/etc` or `$HOME`. Each `content` function receives the same arguments as a config function:
 
 ```nix
-nixosFiles = {
-  "rcrc" = {
-    content = { lib, cfg, ... }:
-      let
-        sessionVarsStr = lib.optionalString (cfg.sessionVariables != { }) (
-          "# Session variables.\n"
-          + lib.concatStringsSep "\n" (
-            lib.mapAttrsToList (k: v: "${k} = ${lib.escapeShellArg (toString v)}") cfg.sessionVariables
-          )
-          + "\n"
-        );
-      in
-      ''
-        # /etc/rcrc: DO NOT EDIT -- this file has been generated automatically.
-
-        ${sessionVarsStr}# History file.
-        history=${lib.escapeShellArg cfg.historyFile}
-
-        # Prompt.
-        prompt=(${lib.concatMapStringsSep " " lib.escapeShellArg cfg.prompt})
-
-        # Functions (rc's equivalent of aliases).
-        ${lib.concatStringsSep "\n" (lib.mapAttrsToList (k: v: "fn ${k} { ${v} }") cfg.shellAliases)}
-
-        ${cfg.initExtra}
-      '';
+hmFiles = {
+  ".rcrc" = {
+    content = { lib, cfg, ... }: ''
+      # ~/.rcrc: DO NOT EDIT -- this file has been generated automatically.
+      ${cfg.initExtra}
+    '';
   };
 };
 ```
 
-Key patterns:
+Quote values with the rules of the target shell. `lib.escapeShellArg` is correct only for POSIX shells. For rc, double each `'` in a single-quoted word.
 
-- Use `lib.escapeShellArg` to safely quote values
-- Use `lib.optionalString` to omit sections when empty (avoids drift for users who don't set those options)
-- Use `lib.concatMapStringsSep` for list rendering
-- Use `lib.concatStringsSep "\n"` + `lib.mapAttrsToList` for attrset rendering
+Use `lib.optionalString` to omit sections that are empty.
 
-### Step 5: Assemble the module
+### flake.nix
 
 ```nix
-{ shnixLib }:
-
 let
-  envBridge = import ../lib/env-bridge.nix;
+  rcModule = import ./modules/rc.nix { shnixLib = self.lib; };
 in
-
-shnixLib.mkShellModule {
-  name = "rc";
-
-  extraOptions = { lib, ... }: { /* ... your options ... */ };
-
-  nixosConfig = { config, lib, ... }: { /* ... bridge ... */ };
-  darwinConfig = { config, lib, ... }: { /* ... bridge ... */ };
-  hmConfig = { config, lib, ... }: { /* ... bridge ... */ };
-
-  nixosFiles = { /* ... file generators ... */ };
-  darwinFiles = { /* ... file generators ... */ };
-  hmFiles = { /* ... file generators ... */ };
-}
-```
-
-Returns `{ nixosModule, darwinModule, homeManagerModule }`.
-
----
-
-## Full Example: rc Shell
-
-Here's the complete rc module as a reference implementation:
-
-```nix
-# modules/rc.nix
-{ shnixLib }:
-
-let
-  envBridge = import ../lib/env-bridge.nix;
-in
-
-shnixLib.mkShellModule {
-  name = "rc";
-
-  extraOptions = { lib, ... }: {
-    historyFile = lib.mkOption {
-      type = lib.types.str;
-      default = "$home/.rc_history";
-      description = "Path to the rc history file.";
-    };
-
-    prompt = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ "; " "" ];
-      description = "The two rc prompts as a list.";
-    };
-
-    shellAliases = lib.mkOption {
-      type = lib.types.attrsOf lib.types.str;
-      default = { };
-      description = "Functions to define in rc (rc uses fn, not alias).";
-    };
-
-    sessionVariables = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.oneOf [ lib.types.str lib.types.int lib.types.path ]);
-      default = { };
-      description = "Environment variables to set in rc.";
-    };
-
-    initExtra = lib.mkOption {
-      type = lib.types.lines;
-      default = "";
-      description = "Additional rc commands for shell init.";
-    };
-  };
-
-  nixosConfig = { config, lib, ... }:
-    let env = envBridge.nixos { inherit config; }; in
-    {
-      programs.rc = {
-        shellAliases = lib.mkDefault env.shellAliases;
-        initExtra = lib.mkDefault env.interactiveShellInit;
-        sessionVariables = lib.mkDefault env.variables;
-      };
-    };
-
-  darwinConfig = { config, lib, ... }:
-    let env = envBridge.darwin { inherit config; }; in
-    {
-      programs.rc = {
-        shellAliases = lib.mkDefault env.shellAliases;
-        initExtra = lib.mkDefault env.interactiveShellInit;
-        sessionVariables = lib.mkDefault env.variables;
-      };
-    };
-
-  hmConfig = { config, lib, ... }:
-    let env = envBridge.homeManager { inherit config; }; in
-    {
-      programs.rc = {
-        shellAliases = lib.mkDefault env.shellAliases;
-        sessionVariables = lib.mkDefault env.sessionVariables;
-      };
-    };
-
-  nixosFiles = {
-    "rcrc" = {
-      content = { lib, cfg, ... }:
-        let
-          sessionVarsStr = lib.optionalString (cfg.sessionVariables != { }) (
-            "# Session variables.\n"
-            + lib.concatStringsSep "\n" (
-              lib.mapAttrsToList (k: v: "${k} = ${lib.escapeShellArg (toString v)}") cfg.sessionVariables
-            )
-            + "\n"
-          );
-        in
-        ''
-          # /etc/rcrc: DO NOT EDIT -- this file has been generated automatically.
-
-          ${sessionVarsStr}# History file.
-          history=${lib.escapeShellArg cfg.historyFile}
-
-          # Prompt.
-          prompt=(${lib.concatMapStringsSep " " lib.escapeShellArg cfg.prompt})
-
-          # Functions (rc's equivalent of aliases).
-          ${lib.concatStringsSep "\n" (lib.mapAttrsToList (k: v: "fn ${k} { ${v} }") cfg.shellAliases)}
-
-          ${cfg.initExtra}
-        '';
-    };
-  };
-
-  # darwinFiles and hmFiles follow the same pattern...
+{
+  nixosModules.rc = rcModule.nixosModule;
+  darwinModules.rc = rcModule.darwinModule;
+  homeManagerModules.rc = rcModule.homeManagerModule;
 }
 ```
 
 ---
 
-## Testing Your Module
+## Tests
 
-Add tests in `tests/default.nix`:
+Add tests to `tests/default.nix`. The helpers `nixosCfg`, `darwinCfg` and `hmCfg` evaluate one module with the stubs:
 
 ```nix
-"mysh nixos module produces /etc/myshrc" = {
-  expr =
-    let
-      cfg = (evalNixos [
-        stubs.nixos
-        self.nixosModules.mysh
-        { programs.mysh.enable = true; }
-      ]).config;
-    in
-    builtins.hasAttr "myshrc" cfg.environment.etc;
-  expected = true;
-};
-
-"mysh bridges environment.shellAliases" = {
-  expr =
-    let
-      cfg = (evalNixos [
-        stubs.nixos
-        self.nixosModules.mysh
-        {
-          programs.mysh.enable = true;
-          environment.shellAliases.ll = "ls -l";
-        }
-      ]).config;
-    in
-    lib.hasInfix "alias ll='ls -l'" cfg.environment.etc.myshrc.text;
+"mysh darwin rc file bridges environment.shellAliases" = {
+  expr = lib.hasInfix "alias -- ll='ls -l'" (
+    darwinCfg self.darwinModules.mysh {
+      programs.mysh.enable = true;
+      environment.shellAliases.ll = "ls -l";
+    }
+  ).environment.etc.myshrc.text;
   expected = true;
 };
 ```
 
-If your shell uses HM stubs, add `home.sessionVariables` to `tests/stubs.nix` first.
+If a module reads an option that `tests/stubs.nix` does not declare, add the option to the stubs. Use the same type as the upstream option.
 
-Run tests with:
+Run the tests:
 
 ```bash
 nix flake check
@@ -403,113 +216,18 @@ nix flake check
 
 ---
 
-## Exposing in flake.nix
+## Rules
 
-```nix
-{
-  outputs = { self, nixpkgs, ... }:
-    let
-      rcModule = import ./modules/rc.nix { shnixLib = self.lib; };
-    in
-    {
-      nixosModules.rc = rcModule.nixosModule;
-      darwinModules.rc = rcModule.darwinModule;
-      homeManagerModules.rc = rcModule.homeManagerModule;
-    };
-}
-```
-
----
-
-## Conceptual Examples: Future Shells
-
-### Fish (native — no POSIX translation)
-
-```nix
-shnixLib.mkShellModule {
-  name = "fish";
-
-  extraOptions = { lib, ... }: {
-    shellAbbrs = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
-    # ... other fish-specific options ...
-  };
-
-  nixosConfig = { config, lib, ... }:
-    let env = envBridge.nixos { inherit config; }; in
-    {
-      programs.fish = {
-        shellAliases = lib.mkDefault env.shellAliases;
-        interactiveShellInit = lib.mkDefault env.interactiveShellInit;
-      };
-    };
-
-  nixosFiles = {
-    "fish/config.fish" = {
-      content = { lib, cfg, ... }:
-        ''
-          # /etc/fish/config.fish
-          if test -z "$__NIXOS_SET_ENVIRONMENT_DONE"
-            source ${config.system.build.setEnvironment}
-          end
-          ${cfg.interactiveShellInit}
-        '';
-    };
-  };
-}
-```
-
-### Elvish
-
-```nix
-shnixLib.mkShellModule {
-  name = "elvish";
-
-  extraOptions = { lib, ... }: {
-    # elvish has no alias concept — everything is a function
-    shellAliases = lib.mkOption {
-      type = lib.types.attrsOf lib.types.str;
-      default = { };
-      description = "Functions to define in elvish.";
-    };
-  };
-
-  hmConfig = { config, lib, ... }:
-    let env = envBridge.homeManager { inherit config; }; in
-    {
-      programs.elvish = {
-        shellAliases = lib.mkDefault env.shellAliases;
-      };
-    };
-
-  hmFiles = {
-    "elvish/rc.elv" = {
-      content = { lib, cfg, ... }:
-        ''
-          # ~/.config/elvish/rc.elv
-          ${lib.concatStringsSep "\n"
-            (lib.mapAttrsToList (k: v: "fn ${k} { e:${v} }") cfg.shellAliases)}
-        '';
-    };
-  };
-}
-```
-
----
-
-## Key Design Principles
-
-1. **Use `envBridge`** for all global environment integration. Don't reach into `config.environment.*` directly.
-2. **Use `lib.mkDefault`** when bridging so users can override at the `programs.<name>` level.
-3. **Omit empty sections** in file generators with `lib.optionalString` to avoid drift for users who don't set those options.
-4. **Keep `mkShellModule` minimal** — it's just an assembler. Don't add shell-specific logic to it.
-5. **Keep POSIX helpers reusable** — `mkPosixShellModule` is for the POSIX family. Non-POSIX shells compose `mkShellModule` + `envBridge` directly.
-
----
+1. Use `envBridge` for all global environment data.
+2. Do not copy POSIX code into the configuration of a non-POSIX shell.
+3. Set bridged values with `lib.mkDefault`.
+4. Omit empty sections in generated files.
+5. Keep `mkShellModule` free of shell syntax. Put POSIX logic in `lib/posix/`.
 
 ## References
 
-- `lib/mk-shell-module.nix` — The universal assembler
-- `lib/env-bridge.nix` — Pure data extraction from global config
-- `lib/posix/` — POSIX-family helpers (options, configs, file generators)
-- `modules/rc.nix` — Complete non-POSIX reference implementation
-- `modules/ksh-base.nix` — Complete POSIX reference implementation
+- `lib/mk-shell-module.nix` — module assembler
+- `lib/env-bridge.nix` — global environment extraction
+- `lib/posix/` — POSIX helpers
+- `modules/rc.nix` — non-POSIX reference implementation
+- `modules/ksh-base.nix` and `modules/ksh93.nix` — POSIX reference implementation

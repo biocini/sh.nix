@@ -197,7 +197,7 @@ alias -- l='ls -alh'
 
 NixOS bash places the interactive guard **after** the `__ETC_PROFILE_DONE` fallback and **before** any interactive content (prompt, aliases, history). The guard is `if [ -n "$PS1" ]` which tests whether a prompt string is set. This ensures non-interactive shells (e.g., `bash -c 'echo hi'`) exit early from `/etc/bashrc` after the environment bootstrap but before any interactive setup.
 
-This same pattern must be reproduced for any POSIX shell's system-wide rc file (`/etc/kshrc`, `/etc/yashrc`, etc.) to prevent non-interactive login shells from running interactive setup.
+The sh.nix system rc files (`/etc/kshrc`, `/etc/yashrc`) put their interactive guard (`case $- in *i*`) in the same position.
 
 ### `/etc/bash_logout`
 

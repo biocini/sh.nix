@@ -101,7 +101,7 @@ if [ "${BASH-no}" != "no" ]; then
 fi
 ```
 
-This is why our `darwinProfile` includes the `path_helper` call and the bash escape hatch — it replaces the stock macOS file.
+The sh.nix `/etc/profile` replaces this stock file. Section 8 describes how it keeps the `path_helper` directories and the bash path.
 
 ### `knownSha256Hashes`
 
@@ -215,12 +215,17 @@ This same pattern must be reproduced for any POSIX shell's system-wide rc file (
 | `knownSha256Hashes`       | None                        | `/etc/bashrc` only                   |
 | `path_helper`             | Not used                    | Called in stock `/etc/profile`       |
 
-## 8. Implications for sh.nix
+## 8. sh.nix /etc/profile on nix-darwin
 
-Our `darwinProfile` replaces the stock macOS `/etc/profile` with a generated one. This is necessary because:
+**Source:** `lib/posix/profile-darwin.nix`
 
-1. The stock profile does not source `setEnvironment` for non-bash shells
-2. The stock profile does not set `__ETC_PROFILE_DONE`
-3. We need to bridge to `$ENV` for our POSIX shells
+When a POSIX shell module of sh.nix is enabled, sh.nix replaces the stock macOS `/etc/profile`. The stock file does not source `setEnvironment`, does not set `__ETC_PROFILE_DONE`, and does not dispatch to the rc files of other POSIX shells.
 
-Our generated `darwinProfile` must reproduce the stock macOS behavior (including `path_helper` and the bash escape hatch) while adding our POSIX shell support.
+The generated file does these steps in sequence:
+
+1. It sources `setEnvironment`, if `__NIX_DARWIN_SET_ENVIRONMENT_DONE` is not set.
+2. It runs `/usr/libexec/path_helper` and adds to the end of `PATH` only the directories that are not already in `PATH`. `setEnvironment` sets a complete `PATH`, so the Nix directories stay first.
+3. It runs `environment.shellInit`, `environment.loginShellInit` and `/etc/profile.local`.
+4. It runs the guard chain. bash sources `/etc/bashrc`, the same as the stock file. Each other registered shell exports `ENV` and sources its rc file.
+
+The module declares `environment.etc.profile.knownSha256Hashes` with the hash of the stock macOS `/etc/profile`. macOS restores the stock file on system updates. nix-darwin activation then moves it to `/etc/profile.before-nix-darwin` and does not stop.

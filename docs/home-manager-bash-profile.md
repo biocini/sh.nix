@@ -194,61 +194,48 @@ programs.bash.initExtra = ''
 
 ---
 
-## 7. Key Observations for sh.nix
+## 7. sh.nix home-manager module
 
-### 7.1 No `shellInit` / `loginShellInit` / `interactiveShellInit` in HM
+**Source:** `lib/posix/configs.nix` (`hm`) and `lib/posix/files.nix` (`hmRc`)
 
-Home Manager bash does not expose these options at all. Our `hmProfile` and `hmRc` templates use:
+### Option mapping
 
-- `profileExtra` → login shell init (analogous to `loginShellInit`)
-- `initExtra` → interactive shell init (analogous to `interactiveShellInit`)
+home-manager bash has no `shellInit`, `loginShellInit` or `interactiveShellInit`. The sh.nix home-manager module uses the home-manager names:
 
-This is a naming mismatch. Our `mk-shell-module.nix` exposes `loginShellInit` and `interactiveShellInit` via `envBridge`, but Home Manager consumers would need to map these to `profileExtra` and `initExtra`.
+| sh.nix option      | home-manager bash option | Location                      |
+| ------------------ | ------------------------ | ----------------------------- |
+| `profileExtra`     | `profileExtra`           | `~/.profile`, behind the shell guard |
+| `sessionVariables` | `sessionVariables`       | `~/.profile`, behind the shell guard |
+| `initExtra`        | `initExtra`              | `~/.<name>rc`                 |
+| `logoutExtra`      | `logoutExtra`            | `~/.<name>_logout`, run by an `EXIT` trap |
+| `shellAliases`     | `shellAliases`           | `~/.<name>rc`                 |
 
-### 7.2 `bashrcExtra` is unique to HM
+sh.nix has no equivalent of `bashrcExtra`.
 
-Home Manager has a concept of "extra commands that run before the interactive guard" (`bashrcExtra`). NixOS and nix-darwin have no equivalent. Our current `hmRc` template does not have a `bashrcExtra` equivalent.
+### `~/.profile`
 
-### 7.3 `hm-session-vars.sh` is global
-
-`home.sessionVariables` is shared across ALL Home Manager shells (bash, zsh, fish). It's sourced from `~/.profile`, which is sourced by all POSIX shells (not just bash). This is analogous to `environment.variables` on NixOS/nix-darwin.
-
-Our current `hmProfile` sources `hm-session-vars.sh` and then adds `sessionVariables` (per-shell). This is correct.
-
-### 7.4 Aliases are per-shell in HM
-
-Home Manager bash aliases are generated inline in `~/.bashrc`. There's no `setAliases` file like nix-darwin has. Our `hmRc` template inlines aliases, which is correct.
-
-### 7.5 No `__ETC_PROFILE_DONE` mechanism in HM
-
-Home Manager does not set `__ETC_PROFILE_DONE` or `__ETC_PROFILE_SOURCED`. These are system-level (NixOS/nix-darwin) concepts. Our `hmProfile` and `hmRc` do not use them, which is correct.
-
----
-
-## 8. How sh.nix's HM Module Currently Works
-
-**Source:** `lib/posix/files.nix` (`hmProfile` and `hmRc`)
-
-### `hmProfile` (`~/.profile`)
+`~/.profile` is read by every POSIX login shell. sh.nix puts the login code of a shell in a block behind the guard of that shell:
 
 ```sh
+# ~/.profile: DO NOT EDIT -- this file has been generated automatically.
+
 . "${config.home.sessionVariablesPackage}/etc/profile.d/hm-session-vars.sh"
 
-${sessionVariablesStr}
-
-${cfg.profileExtra}
+if [ -n "${KSH_VERSION:-}" ]; then
+export FOO=bar
+fi
 ```
 
-This matches Home Manager bash's `~/.profile` almost exactly, except:
+home-manager bash sets `home.file.".profile".source` directly. When `programs.bash.enable` is true, sh.nix does not write `~/.profile`. It adds the same block to `programs.bash.profileExtra`.
 
-- sh.nix adds `sessionVariables` (per-shell session vars)
-- Home Manager bash also adds `sessionVariables` (but we handle it via `extraHmOptions`)
-
-### `hmRc` (`~/.${name}rc`)
+### `~/.<name>rc`
 
 ```sh
-if [ -n "$__HOME_${PNAME}RC_SOURCED" ]; then return; fi
-__HOME_${PNAME}RC_SOURCED=1
+# Only read this file in ksh.
+[ -n "${KSH_VERSION:-}" ] || return
+
+if [ -n "$__HOME_KSHRC_SOURCED" ]; then return; fi
+__HOME_KSHRC_SOURCED=1
 
 case $- in
   *i*) ;;
@@ -256,44 +243,22 @@ case $- in
 esac
 
 HISTSIZE=${toString cfg.histSize}
-HISTFILE=${cfg.histFile}
+HISTFILE="${cfg.histFile}"
 
 ${aliasesStr}
 
 ${cfg.initExtra}
 ```
 
-Differences from Home Manager bash's `~/.bashrc`:
-| Feature | sh.nix hmRc | Home Manager bashrc |
-|---------|-------------|---------------------|
-| Once-per-shell guard | `__HOME_*RC_SOURCED` | `__ETC_BASHRC_SOURCED` (HM doesn't set this) |
-| Interactive guard | `case $- in *i*)` | `[[ $- == *i* ]]` |
-| History | `HISTSIZE`, `HISTFILE` | `HISTSIZE`, `HISTFILE`, `HISTFILESIZE`, `HISTCONTROL`, `HISTIGNORE` |
-| Aliases | `alias k=v` | `alias -- k=v` |
-| shopt | Not set | `histappend`, `extglob`, `globstar`, `checkjobs` |
-| Completion | Not handled | `enableCompletion` + `mkOrder 100` |
-| bashrcExtra | Not supported | Supported (before guard) |
+| Feature              | sh.nix `~/.<name>rc`   | home-manager `~/.bashrc` |
+| -------------------- | ---------------------- | ------------------------ |
+| Shell guard          | `[ -n "${KSH_VERSION:-}" ] \|\| return` | None |
+| Once-per-shell guard | `__HOME_*RC_SOURCED`   | None                     |
+| Interactive guard    | `case $- in *i*)`      | `[[ $- == *i* ]]`        |
+| History              | `HISTSIZE`, `HISTFILE` | `HISTSIZE`, `HISTFILE`, `HISTFILESIZE`, `HISTCONTROL`, `HISTIGNORE` |
+| Aliases              | `alias -- k=v`         | `alias -- k=v`           |
+| Completion           | Not handled            | `enableCompletion`       |
 
-### `hmOnlyOptions`
+### Scope
 
-Our `lib/posix/options.nix` `hmOptions` exposes:
-
-- `profileExtra` → maps to login shell init
-- `sessionVariables` → maps to per-shell session variables
-- `logoutExtra` → generates `~/.${name}_logout` with trap
-
-Home Manager bash does not have `logoutExtra`. It has `logoutExtra` directly in `programs.bash`. Our naming matches.
-
----
-
-## 9. Implications for Unified Profile Design
-
-The unified `/etc/profile` generator is **only for NixOS and nix-darwin**. Home Manager is NOT affected because:
-
-1. Home Manager does not generate `/etc/profile` or `/etc/bashrc`
-2. Home Manager uses `~/.bash_profile` → `~/.bashrc` bridge
-3. Home Manager's session variable mechanism (`hm-session-vars.sh`) is independent
-
-The unified profile generator should be imported ONLY by `nixosModule` and `darwinModule`, NOT by `homeManagerModule`.
-
-Our current handoff memo already reflects this (the `homeManagerModule` is unchanged).
+The unified `/etc/profile` generator is part of the NixOS and nix-darwin modules only. home-manager does not write `/etc` files, and it does not use `__ETC_PROFILE_DONE` or `__ETC_PROFILE_SOURCED`.

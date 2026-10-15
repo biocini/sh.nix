@@ -1,8 +1,7 @@
 # Existing Environment Generation
 
 This document traces how NixOS and nix-darwin generate shell initialization
-files for **bash** and **zsh**, as a reference for how `sh.nix` should behave
-for arbitrary POSIX shells.
+files for **bash** and **zsh**.
 
 ---
 

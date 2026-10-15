@@ -31,7 +31,7 @@ All tests live in `tests/default.nix`. Add tests for:
 - Library API changes
 - Environment bridge flows (aliases, variables, init scripts)
 
-Tests use stub modules (`tests/stubs.nix`) to provide minimal NixOS-like and home-manager-like option declarations for `lib.evalModules`. Do not import full nixpkgs modules in tests.
+Tests use stub modules (`tests/stubs.nix`) to provide minimal NixOS-like and home-manager-like option declarations for `lib.evalModules`. Do not import full nixpkgs modules in tests. A stub option must accept every value type that the upstream option accepts. For example, nix-darwin sets list values in `environment.variables`.
 
 **nix-unit naming**: Attribute names in `tests/default.nix` must start with `test` for nix-unit to discover them. The `lib.mapAttrs'` wrapper in `tests/default.nix` handles this automatically.
 
@@ -39,8 +39,8 @@ Tests use stub modules (`tests/stubs.nix`) to provide minimal NixOS-like and hom
 
 Each shell exposes three modules: `nixosModules.<name>`, `darwinModules.<name>`, `homeManagerModules.<name>`.
 
-- **nixosModule and darwinModule are mutually exclusive** — importing both for the same shell triggers an assertion failure. This is by design: they both write `/etc/profile` and `/etc/<name>rc` with incompatible semantics.
-- **homeManagerModule composes with either** system module. It writes `~/.<name>rc` and `~/.profile` and does not conflict.
+- **nixosModule and darwinModule are mutually exclusive** — importing both for the same shell triggers an assertion failure. The two modules write the same `/etc` files with platform-specific content.
+- **homeManagerModule composes with either** system module. It writes only files in `$HOME`. A POSIX shell writes `~/.<name>rc` and `~/.profile`; when home-manager `programs.bash` is enabled, it adds its login code to `programs.bash.profileExtra` and does not write `~/.profile`.
 
 The module composition pattern in `flake.nix` must remain:
 
@@ -58,4 +58,7 @@ Do **not** inline `mkPosixShellModule` in `flake.nix` — the returned functions
 
 - They use `set -euo pipefail` and hash validation (`[[ "$hash" =~ ^sha256-[A-Za-z0-9+/=]+$ ]]`)
 - Nightly pins to commit SHA (not mutable `dev` ref) with a change guard
-- Do not modify `packages/` directly; let the workflows handle version bumps
+- Each workflow builds the updated package and runs `nix flake check` before it pushes
+- The workflows edit `pkgs/ksh93/stable.nix`, `pkgs/ksh93/nightly.nix` and `pkgs/rc/nightly.nix` with `sed`. Each of these files must contain exactly one `version = "…";`, one `hash = "…";` and (nightly) one `rev = "…";` line. Put shared build code in `pkgs/ksh93/generic.nix`.
+- Do not change versions or hashes in `pkgs/` by hand; let the workflows do version updates
+- Tests must not contain package versions, because the workflows change them

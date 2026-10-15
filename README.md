@@ -1,246 +1,258 @@
 # sh.nix
 
-First-class [NixOS](https://nixos.org) / [nix-darwin](https://github.com/LnL7/nix-darwin) / [home-manager](https://github.com/nix-community/home-manager) support for shells outside the big three (bash, zsh, fish).
-
-## Problem
-
-NixOS and home-manager provide rich, well-integrated `programs.bash`, `programs.zsh`, and `programs.fish` modules that handle:
-
-- Writing system-wide and per-user initialization files
-- Sourcing the POSIX `set-environment` / `hm-session-vars.sh` aggregators
-- Propagating `environment.shellAliases` / `home.shellAliases`
-- Registering the shell in `environment.shells`
-
-Most other shells have **no equivalent modules**. Users must manually wire `home.file`, `environment.etc`, and session variables. Even fish's support is hacky (POSIX-to-fish translation via babelfish/foreign-env). Shells like **rc**, **elvish**, and **xonsh** have no NixOS or home-manager support at all.
-
-## Solution
-
-`sh.nix` provides composable building blocks for shell module authors:
-
-- **`lib.mkPosixShellModule`** — generates full modules for POSIX-compatible shells
-- **`lib.mkShellModule`** — the universal assembler for any shell
-- **`lib.envBridge`** — pure data extraction from global environment config
-- **`lib/posix/`** — reusable POSIX-family helpers (options, configs, file generators)
-
-This architecture scales from POSIX shells (ksh, yash, dash) to entirely non-POSIX shells (rc, fish, xonsh, elvish) without leaky abstractions.
+sh.nix supplies [NixOS](https://nixos.org), [nix-darwin](https://github.com/nix-darwin/nix-darwin) and [home-manager](https://github.com/nix-community/home-manager) modules for shells other than bash, zsh and fish. It also supplies the library that builds these modules.
 
 ## Supported shells
 
-| Shell     | Type      | Status          |
-| --------- | --------- | --------------- |
-| **ksh93** | POSIX     | Fully supported |
-| **rc**    | Non-POSIX | Fully supported |
+| Shell     | Type      | Modules                                    |
+| --------- | --------- | ------------------------------------------ |
+| **ksh93** | POSIX     | `modules/ksh-base.nix` + `modules/ksh93.nix` |
+| **rc**    | Non-POSIX | `modules/rc.nix`                           |
 
-## Quick start: POSIX shell
+## Flake outputs
 
-For POSIX-compatible shells that understand `/etc/profile`, `$ENV`, `export`, and `alias`:
+| Output                                | Contents                                                        |
+| ------------------------------------- | --------------------------------------------------------------- |
+| `packages.<system>.ksh`               | ksh93u+m, latest release                                        |
+| `packages.<system>.ksh-nightly`       | ksh93u+m, latest commit on the `dev` branch                     |
+| `packages.<system>.rc`                | rc (Byron Rakitzis), latest commit, with `/etc/rcrc` support    |
+| `overlays.default`                    | Sets `ksh`, `ksh-nightly` and `rc` in nixpkgs to the packages above |
+| `nixosModules.{ksh,rc}`               | NixOS modules                                                   |
+| `darwinModules.{ksh,rc}`              | nix-darwin modules                                              |
+| `homeManagerModules.{ksh,rc}`         | home-manager modules                                            |
+| `lib`                                 | `mkShellModule`, `mkPosixShellModule`, `envBridge`              |
 
-```nix
-# modules/mysh.nix
-{ shnixLib }:
+A module installs `programs.<name>.package`. The default value is `pkgs.<name>`. Apply `overlays.default` to use the packages of this flake.
 
-shnixLib.mkPosixShellModule {
-  name = "yash";              # sets programs.yash namespace
-  etcRcPath = "yashrc";       # /etc/yashrc
-  homeRcPath = ".yashrc";     # ~/.yashrc
-}
-```
+The NixOS module and the nix-darwin module of one shell are mutually exclusive. An assertion stops the evaluation if a configuration imports both. The home-manager module operates with either system module.
 
-This gives you `programs.yash.enable`, `programs.yash.shellAliases`, `programs.yash.initExtra`, and automatic bridges from `environment.shellAliases` (NixOS/darwin) and `home.shellAliases` (HM). It generates `/etc/profile`, `/etc/yashrc`, `~/.profile`, and `~/.yashrc`.
-
-## Quick start: Non-POSIX shell
-
-For shells with their own config syntax and semantics:
+## Usage
 
 ```nix
-# modules/rc.nix
-{ shnixLib }:
+{
+  inputs.shnix.url = "github:biocini/sh.nix";
+  inputs.shnix.inputs.nixpkgs.follows = "nixpkgs";
 
-let
-  envBridge = import ../lib/env-bridge.nix;
-in
-
-shnixLib.mkShellModule {
-  name = "rc";
-
-  extraOptions = { lib, ... }: {
-    historyFile = lib.mkOption { type = lib.types.str; default = "$home/.rc_history"; };
-    prompt = lib.mkOption { type = lib.types.listOf lib.types.str; default = [ "; " "" ]; };
-    shellAliases = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
-    sessionVariables = lib.mkOption { type = lib.types.attrsOf (lib.types.oneOf [ lib.types.str lib.types.int lib.types.path ]); default = { }; };
-    initExtra = lib.mkOption { type = lib.types.lines; default = ""; };
-  };
-
-  nixosConfig = { config, lib, ... }:
-    let env = envBridge.nixos { inherit config; }; in
-    {
-      programs.rc = {
-        shellAliases = lib.mkDefault env.shellAliases;
-        initExtra = lib.mkDefault env.interactiveShellInit;
-        sessionVariables = lib.mkDefault env.variables;
-      };
-    };
-
-  nixosFiles = {
-    "rcrc" = {
-      content = { lib, cfg, ... }:
-        ''
-          # /etc/rcrc: DO NOT EDIT -- this file has been generated automatically.
-          history=${lib.escapeShellArg cfg.historyFile}
-          prompt=(${lib.concatMapStringsSep " " lib.escapeShellArg cfg.prompt})
-          ${lib.concatStringsSep "\n" (lib.mapAttrsToList (k: v: "fn ${k} { ${v} }") cfg.shellAliases)}
-          ${cfg.initExtra}
-        '';
+  outputs = { nix-darwin, home-manager, shnix, ... }: {
+    darwinConfigurations.host = nix-darwin.lib.darwinSystem {
+      modules = [
+        { nixpkgs.overlays = [ shnix.overlays.default ]; }
+        shnix.darwinModules.ksh
+        { programs.ksh.enable = true; }
+        home-manager.darwinModules.home-manager
+        {
+          home-manager.sharedModules = [ shnix.homeManagerModules.ksh ];
+          home-manager.users.alice.programs.ksh = {
+            enable = true;
+            shellOptions = [ "vi" ];
+          };
+        }
+      ];
     };
   };
 }
 ```
 
-The full working implementation is in [`modules/rc.nix`](modules/rc.nix). See [`docs/implementing-a-shell.md`](docs/implementing-a-shell.md) for a complete guide.
+## POSIX shells (ksh93)
 
-## The `envBridge` abstraction
+### Generated files
 
-`lib.envBridge` extracts global environment config into plain attrsets. It is the **only** truly universal component across all shell families:
+| File            | Platform        | Contents                                                       |
+| --------------- | --------------- | -------------------------------------------------------------- |
+| `/etc/profile`  | NixOS, darwin   | Global environment, then a guard chain to each shell's rc file |
+| `/etc/kshrc`    | NixOS, darwin   | History, prompt, aliases, `interactiveShellInit`               |
+| `~/.kshrc`      | home-manager    | History, aliases, `initExtra`                                  |
+| `~/.profile`    | home-manager    | `hm-session-vars.sh`, then the login code of each shell        |
+| `~/.ksh_logout` | home-manager    | `logoutExtra`, if it is not empty                              |
 
-```nix
-let env = envBridge.nixos { inherit config; }; in
-# env.shellAliases      — from config.environment.shellAliases
-# env.variables         — from config.environment.variables
-# env.shellInit         — from config.environment.shellInit
-# env.loginShellInit    — from config.environment.loginShellInit
-# env.interactiveShellInit — from config.environment.interactiveShellInit
+### /etc/profile
 
-let env = envBridge.homeManager { inherit config; }; in
-# env.shellAliases      — from config.home.shellAliases
-# env.sessionVariables  — from config.home.sessionVariables
-```
+All POSIX login shells read `/etc/profile`. The generated file does these steps in sequence:
 
-Shell modules map these values to their shell-specific options using `lib.mkDefault`, so users can still override at `programs.<name>.shellAliases` if needed.
+1. It sources the system `set-environment` script, if a parent process did not source it.
+2. On darwin, it runs `/usr/libexec/path_helper`. It adds to the end of `PATH` only the directories that are not already in `PATH`, so the Nix directories stay first.
+3. It runs `environment.shellInit`, `environment.loginShellInit` and `/etc/profile.local`.
+4. It runs a guard chain. bash is always the first entry and sources `/etc/bashrc`. Each other registered shell has a guard, for example `[ -n "${KSH_VERSION:-}" ]`. The matching entry exports `ENV=/etc/kshrc`, runs `programs.<name>.loginShellInit` and sources the rc file.
 
-## Public API
+A shell name without a known guard uses `[ -n "${<NAME>_VERSION:-}" ]`. The known guards are in `lib/posix/guards.nix`.
+
+On darwin, the module declares the SHA-256 of the stock macOS `/etc/profile`. When macOS restores the stock file, nix-darwin activation moves it to `/etc/profile.before-nix-darwin` and continues.
+
+### rc files
+
+A child process inherits `ENV=/etc/kshrc`. Other POSIX shells, for example dash, read `$ENV` when they start in interactive mode. Thus `/etc/kshrc` and `~/.kshrc` start with the ksh guard and return immediately in other shells.
+
+The default prompt is `user@host:directory$ `. The shell expands `$USER` and `$PWD` each time it shows the prompt.
+
+### ~/.profile
+
+Each POSIX login shell reads `~/.profile`. sh.nix puts the `sessionVariables` and `profileExtra` of a shell in a block behind the guard of that shell.
+
+When home-manager `programs.bash.enable` is true, home-manager bash writes `~/.profile`. sh.nix then adds its block to `programs.bash.profileExtra` and does not write `~/.profile`.
+
+### Options
+
+All platforms:
+
+| Option         | Type          | Default                   | Description                     |
+| -------------- | ------------- | ------------------------- | ------------------------------- |
+| `enable`       | `bool`        | `false`                   | Install the shell and write its files |
+| `package`      | `package`     | `pkgs.<name>`             | The shell package               |
+| `histFile`     | `str`         | `"$HOME/.<name>_history"` | History file. The shell expands parameters in it. |
+| `histSize`     | `int`         | `2000` (ksh: `10000`)     | History lines in memory         |
+| `shellAliases` | `attrsOf str` | global aliases            | Aliases for interactive shells  |
+
+NixOS and nix-darwin:
+
+| Option                 | Type    | Default                            | Description                               |
+| ---------------------- | ------- | ---------------------------------- | ----------------------------------------- |
+| `loginShellInit`       | `lines` | `""`                               | Code in `/etc/profile` for this shell only |
+| `interactiveShellInit` | `lines` | `environment.interactiveShellInit` | Code in the system rc file                |
+
+home-manager:
+
+| Option             | Type                           | Default | Description                                    |
+| ------------------ | ------------------------------ | ------- | ---------------------------------------------- |
+| `initExtra`        | `lines`                        | `""`    | Code in the user rc file                       |
+| `profileExtra`     | `lines`                        | `""`    | Login code in `~/.profile` for this shell only |
+| `sessionVariables` | `attrsOf (str \| int \| path)` | `{}`    | Variables that `~/.profile` exports for this shell only |
+| `logoutExtra`      | `lines`                        | `""`    | Code that runs when the shell exits            |
+
+ksh only, all platforms:
+
+| Option         | Type          | Default | Description                                      |
+| -------------- | ------------- | ------- | ------------------------------------------------ |
+| `shellOptions` | `listOf str`  | `[]`    | Options for `set -o`                             |
+| `functionsDir` | `nullOr str`  | `null`  | Directory that is added to the start of `FPATH`  |
+
+These ksh options go into `interactiveShellInit` on NixOS and nix-darwin, and into `initExtra` on home-manager.
+
+The default of `shellAliases` is `environment.shellAliases` on NixOS and nix-darwin, and `home.shellAliases` on home-manager. A value for `programs.<name>.shellAliases` replaces this default.
+
+## rc
+
+### Generated files
+
+| File       | Platform      | Contents                                                       |
+| ---------- | ------------- | -------------------------------------------------------------- |
+| `/etc/rcrc` | NixOS, darwin | `environment.variables`, `sessionVariables`, history, prompt, functions, `loginShellInit` |
+| `~/.rcrc`  | home-manager  | `home.sessionVariables`, `sessionVariables`, history, prompt, functions, `initExtra` |
+
+The rc package of this flake reads `/etc/rcrc` and then `~/.rcrc` in login shells. If `$RCRC` is set, it reads only that file. The nixpkgs rc package does not read `/etc/rcrc`, so use `overlays.default` with the system modules.
+
+### Options
+
+| Option             | Platforms     | Type                                     | Default         | Description |
+| ------------------ | ------------- | ---------------------------------------- | --------------- | ----------- |
+| `historyFile`      | all           | `str`                                    | `".rc_history"` | A relative path is relative to `$home` |
+| `prompt`           | all           | `listOf str`                             | `[ "; " "" ]`   | Primary and continuation prompt |
+| `shellAliases`     | all           | `attrsOf str`                            | global aliases  | `ll = "ls -l"` gives `fn ll { ls -l $* }`. A value must not contain `}`. |
+| `sessionVariables` | all           | `attrsOf (str \| int \| path \| listOf str)` | `{}`        | These values override the global variables |
+| `loginShellInit`   | NixOS, darwin | `lines`                                  | `""`            | rc code in `/etc/rcrc` |
+| `initExtra`        | home-manager  | `lines`                                  | `""`            | rc code in `~/.rcrc` |
+
+Variable values use these rules:
+
+- sh.nix joins a list with `:`.
+- `$NAME` and `${NAME}` become rc references. They expand when rc reads the file.
+- All other text is literal.
+
+`environment.interactiveShellInit` contains POSIX code. The rc module does not copy it into `/etc/rcrc`.
+
+## Library
 
 ### `lib.mkPosixShellModule { name, etcRcPath ?, homeRcPath ? }`
 
-Generates `{ nixosModule, darwinModule, homeManagerModule }` for POSIX shells.
+Returns `{ nixosModule, darwinModule, homeManagerModule }` for a POSIX shell. The modules have the options in [POSIX shells](#options), and they register the shell in the `/etc/profile` guard chain.
 
 | Parameter    | Default             | Description                                  |
 | ------------ | ------------------- | -------------------------------------------- |
-| `name`       | —                   | Shell name, sets `programs.<name>` namespace |
-| `etcRcPath`  | `name + "rc"`       | System-wide rc filename (no leading `/etc/`) |
-| `homeRcPath` | `"." + name + "rc"` | User rc filename                             |
+| `name`       | —                   | Shell name. It sets the `programs.<name>` namespace. |
+| `etcRcPath`  | `name + "rc"`       | System rc file name, relative to `/etc`      |
+| `homeRcPath` | `"." + name + "rc"` | User rc file name, relative to `$HOME`       |
 
-User-facing options under `programs.<name>`:
-
-| Option         | Type          | Default                   | Description                              |
-| -------------- | ------------- | ------------------------- | ---------------------------------------- |
-| `enable`       | `bool`        | `false`                   | Enable the shell and generate init files |
-| `package`      | `package`     | `pkgs.<name>`             | The shell package                        |
-| `histFile`     | `str`         | `"$HOME/.<name>_history"` | History file path                        |
-| `histSize`     | `int`         | `2000`                    | History lines in memory                  |
-| `shellAliases` | `attrsOf str` | `{}`                      | Interactive shell aliases                |
-| `initExtra`    | `lines`       | `""`                      | Extra interactive init                   |
-
-Home-manager-specific options:
-
-| Option             | Type                           | Default | Description                                   |
-| ------------------ | ------------------------------ | ------- | --------------------------------------------- |
-| `profileExtra`     | `lines`                        | `""`    | Extra login init                              |
-| `sessionVariables` | `attrsOf (str \| int \| path)` | `{}`    | Login env vars                                |
-| `logoutExtra`      | `lines`                        | `""`    | Logout commands (triggers logout file + trap) |
-
-Internal options (used by the env bridge):
-
-| Option                 | Assembled From                                       |
-| ---------------------- | ---------------------------------------------------- |
-| `shellInit`            | `setEnvironment` bootstrap + `environment.shellInit` |
-| `loginShellInit`       | `environment.loginShellInit`                         |
-| `interactiveShellInit` | `environment.interactiveShellInit`                   |
+```nix
+shnix.lib.mkPosixShellModule {
+  name = "yash";
+  etcRcPath = "yashrc";
+  homeRcPath = ".yashrc";
+}
+```
 
 ### `lib.mkShellModule { name, ... }`
 
-The universal assembler. Accepts shell-specific options, config bridges, and file generators. Returns `{ nixosModule, darwinModule, homeManagerModule }`.
+Returns `{ nixosModule, darwinModule, homeManagerModule }` for any shell. It does not know shell syntax.
 
-Parameters:
+| Parameter            | Default     | Description                                          |
+| -------------------- | ----------- | ---------------------------------------------------- |
+| `name`               | —           | Shell name                                           |
+| `package`            | `null`      | Default package. `null` gives `pkgs.<name>`.         |
+| `extraOptions`       | `(_: { })`  | Options on all platforms                             |
+| `extraSystemOptions` | `(_: { })`  | Options on NixOS and nix-darwin                      |
+| `extraHmOptions`     | `(_: { })`  | Options on home-manager                              |
+| `nixosConfig`        | `(_: { })`  | Config for NixOS                                     |
+| `darwinConfig`       | `(_: { })`  | Config for nix-darwin                                |
+| `hmConfig`           | `(_: { })`  | Config for home-manager                              |
+| `nixosFiles`         | `{ }`       | Files in `/etc` on NixOS                             |
+| `darwinFiles`        | `{ }`       | Files in `/etc` on nix-darwin                        |
+| `hmFiles`            | `{ }`       | Files in `$HOME`                                     |
 
-| Parameter        | Default | Description                                  |
-| ---------------- | ------- | -------------------------------------------- |
-| `name`           | —       | Shell name                                   |
-| `package`        | `null`  | Default package (or `pkgs.<name>`)           |
-| `extraOptions`   | `{}`    | Options available on all platforms           |
-| `extraHmOptions` | `{}`    | Options available only in home-manager       |
-| `defaults`       | `{}`    | Default values for `programs.<name>` options |
-| `nixosConfig`    | `{}`    | Config bridge for NixOS                      |
-| `darwinConfig`   | `{}`    | Config bridge for nix-darwin                 |
-| `hmConfig`       | `{}`    | Config bridge for home-manager               |
-| `nixosFiles`     | `{}`    | File generators for `/etc/*`                 |
-| `darwinFiles`    | `{}`    | File generators for `/etc/*` on darwin       |
-| `hmFiles`        | `{}`    | File generators for `~/.*`                   |
+Each option and config function receives `{ config, lib, pkgs, cfg }`, where `cfg` is `config.programs.<name>`. Each file is `{ content = { config, lib, pkgs, cfg }: "<text>"; }`.
 
 ### `lib.envBridge`
 
-Pure data extraction from global environment configuration.
+Extracts the global environment configuration as plain attribute sets:
 
 ```nix
 envBridge.nixos { inherit config; }
-# => { shellAliases, shellInit, loginShellInit, interactiveShellInit, variables }
+# => { shellAliases, shellInit, interactiveShellInit, variables }
 
 envBridge.darwin { inherit config; }
-# => { shellAliases, shellInit, loginShellInit, interactiveShellInit, variables }
+# => { shellAliases, shellInit, interactiveShellInit, variables }
 
 envBridge.homeManager { inherit config; }
 # => { shellAliases, sessionVariables }
 ```
 
-### `lib.shell` — POSIX script helpers
+`shellAliases` does not contain null entries, and its values are strings.
 
-```nix
-sh = shnix.lib.shell { inherit lib; };
-
-sh.export "FOO" "bar"
-# => export FOO="bar"
-
-sh.exportAll { FOO = "bar"; BAZ = 42; }
-# => export FOO="bar"
-#    export BAZ="42"
-
-sh.mkAliases { ll = "ls -l"; g = null; }
-# => alias -- ll='ls -l'
-#    (null values filtered out)
-
-sh.prependToVar ":" "PATH" [ "$HOME/bin" "$HOME/.local/bin" ]
-# => $HOME/bin:$HOME/.local/bin${PATH:+:}$PATH
-```
+See [`docs/implementing-a-shell.md`](docs/implementing-a-shell.md) for the full guide.
 
 ## Project structure
 
 ```
 .
 ├── docs/
-│   ├── implementation.md          # mkPosixShellModule internal spec
-│   ├── implementing-a-shell.md    # Guide for downstream shell implementers
-│   └── ...
+│   ├── implementing-a-shell.md    # Guide for shell module authors
+│   ├── existing-env-gen.md        # Upstream bash/zsh init file generation
+│   ├── nixos-bash-profile.md      # Upstream NixOS bash reference
+│   ├── nix-darwin-bash-profile.md # Upstream nix-darwin bash reference
+│   └── home-manager-bash-profile.md # Upstream home-manager bash reference
 ├── lib/
-│   ├── default.nix                # Public API exports
-│   ├── env-bridge.nix             # Pure env config extraction
-│   ├── mk-shell-module.nix        # Universal module assembler
+│   ├── default.nix                # Public library
+│   ├── env-bridge.nix             # Global environment extraction
+│   ├── mk-shell-module.nix        # Module assembler
 │   ├── mk-posix-shell.nix         # POSIX shell wrapper
-│   ├── shell-script.nix           # POSIX script generation helpers
-│   └── posix/                     # POSIX-family decomposed helpers
-│       ├── options.nix
-│       ├── configs.nix
-│       └── files.nix
+│   └── posix/
+│       ├── options.nix            # POSIX options
+│       ├── configs.nix            # Platform config
+│       ├── files.nix              # rc file generators
+│       ├── guards.nix             # Shell guard expressions
+│       ├── registry.nix           # Registry of POSIX shells
+│       ├── dispatch.nix           # /etc/profile guard chain
+│       ├── profile-nixos.nix      # /etc/profile for NixOS
+│       └── profile-darwin.nix     # /etc/profile for nix-darwin
 ├── modules/
 │   ├── ksh-base.nix               # mkPosixShellModule for ksh
-│   ├── ksh93.nix                  # ksh93-specific options layer
-│   └── rc.nix                     # Non-POSIX rc module (reference impl)
+│   ├── ksh93.nix                  # ksh options
+│   └── rc.nix                     # rc module
 ├── pkgs/
-│   ├── ksh93/                     # ksh93 packages (stable + nightly)
-│   └── rc/                        # rc package (nightly + nixos-rcrc.patch)
+│   ├── ksh93/                     # generic.nix, stable.nix, nightly.nix
+│   └── rc/                        # rc package and /etc/rcrc patch
 ├── tests/
-│   ├── default.nix                # 28 nix-unit test cases
-│   └── stubs.nix                  # Minimal NixOS/HM stubs
-├── flake.nix
-└── AGENTS.md
+│   ├── default.nix                # nix-unit tests
+│   └── stubs.nix                  # Minimal NixOS, nix-darwin and home-manager options
+└── flake.nix
 ```
 
 ## Testing
@@ -249,17 +261,9 @@ sh.prependToVar ":" "PATH" [ "$HOME/bin" "$HOME/.local/bin" ]
 nix flake check
 ```
 
-Tests live in `tests/default.nix` and are discovered by `nix-unit` (attribute names must start with `test`). They use stub modules (`tests/stubs.nix`) to avoid importing full nixpkgs. Tests cover:
+The tests are in `tests/default.nix`. nix-unit finds each attribute whose name starts with `test`. The tests use the stub modules in `tests/stubs.nix`, not the full NixOS, nix-darwin or home-manager modules.
 
-- Library API shape (`mkPosixShellModule`, `mkShellModule` return values)
-- File generation for all three platforms
-- Environment bridge flows (aliases, variables, init scripts)
-- Module conflict assertions
-- Empty-config drift avoidance
-
-## Writing a new shell module
-
-See [`docs/implementing-a-shell.md`](docs/implementing-a-shell.md) for a complete guide covering POSIX shells, non-POSIX shells, testing, and conceptual examples for fish, xonsh, and elvish.
+GitHub workflows update `pkgs/ksh93` and `pkgs/rc` each day. A workflow builds the package and runs `nix flake check` before it pushes the update.
 
 ## License
 
