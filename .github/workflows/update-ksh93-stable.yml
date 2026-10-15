@@ -11,9 +11,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31
         with:
           nix_path: nixpkgs=channel:nixos-unstable
           extra_nix_config: |
@@ -46,6 +46,13 @@ jobs:
           sed -i "s|version = \"[^\"]*\";|version = \"${{ steps.release.outputs.version }}\";|" pkgs/ksh93/stable.nix
           sed -i "s|hash = \"[^\"]*\";|hash = \"$hash\";|" pkgs/ksh93/stable.nix
           echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: build and test
+        if: steps.release.outputs.version != steps.current.outputs.version
+        run: |
+          set -euo pipefail
+          nix build -L .#ksh
+          nix flake check -L
 
       - name: commit if changed
         if: steps.release.outputs.version != steps.current.outputs.version

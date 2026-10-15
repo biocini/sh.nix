@@ -3,7 +3,6 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
     nix-unit.url = "github:nix-community/nix-unit";
     nix-unit.inputs.nixpkgs.follows = "nixpkgs";
   };
@@ -12,30 +11,33 @@
     {
       self,
       nixpkgs,
-      flake-utils,
       nix-unit,
     }:
     let
       kshBase = import ./modules/ksh-base.nix { shnixLib = self.lib; };
       ksh93Extra = import ./modules/ksh93.nix;
       rcModule = import ./modules/rc.nix { shnixLib = self.lib; };
-      forAllSystems = nixpkgs.lib.genAttrs flake-utils.lib.defaultSystems;
+      forAllSystems = nixpkgs.lib.genAttrs [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
     in
-    flake-utils.lib.eachDefaultSystem (
-      system:
-      let
-        pkgs = nixpkgs.legacyPackages.${system};
-      in
-      {
-        packages = {
+    {
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
           ksh = pkgs.callPackage ./pkgs/ksh93/stable.nix { };
           ksh-nightly = pkgs.callPackage ./pkgs/ksh93/nightly.nix { };
           rc = pkgs.callPackage ./pkgs/rc/default.nix { };
           default = self.packages.${system}.ksh;
-        };
-      }
-    )
-    // {
+        }
+      );
+
       lib = import ./lib;
 
       overlays.default = final: prev: {
@@ -88,7 +90,7 @@
               nix-unit --eval-store "$HOME" \
                 --extra-experimental-features flakes \
                 --override-input nixpkgs ${nixpkgs} \
-                --override-input shnix ${self} \
+                --override-input nix-unit ${nix-unit} \
                 --flake ${self}#tests
               touch $out
             '';
