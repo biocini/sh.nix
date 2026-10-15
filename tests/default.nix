@@ -178,6 +178,20 @@ lib.mapAttrs'
       expected = true;
     };
 
+    "darwin /etc/profile accepts stock macOS profile" = {
+      expr =
+        let
+          cfg =
+            (evalDarwin [
+              stubs.nixos
+              self.darwinModules.ksh
+              { programs.ksh.enable = true; }
+            ]).config;
+        in
+        cfg.environment.etc.profile.knownSha256Hashes;
+      expected = [ "a3fe9f414586c0d3cacbe3b6920a09d8718e503bca22e23fef882203bf765065" ];
+    };
+
     "darwin module sets LANG" = {
       expr =
         let

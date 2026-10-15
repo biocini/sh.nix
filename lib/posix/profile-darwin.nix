@@ -96,6 +96,12 @@ in
           ${allGuards}
           fi
         '';
+
+        # Stock files that activation may move to /etc/profile.before-nix-darwin.
+        # macOS restores this file on system updates.
+        environment.etc.profile.knownSha256Hashes = [
+          "a3fe9f414586c0d3cacbe3b6920a09d8718e503bca22e23fef882203bf765065" # macOS
+        ];
       }
     ]
   );
