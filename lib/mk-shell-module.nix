@@ -66,27 +66,6 @@ let
           defaultText = lib.literalExpression "pkgs.${pname}";
           description = "The ${pname} package to use.";
         };
-
-        _nixosModuleLoaded = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          internal = true;
-          visible = false;
-        };
-
-        _darwinModuleLoaded = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          internal = true;
-          visible = false;
-        };
-
-        _homeManagerModuleLoaded = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          internal = true;
-          visible = false;
-        };
       }
       // withArgs extraOptions args;
     };
@@ -118,14 +97,7 @@ let
   # NixOS and nix-darwin modules differ only in their flags, platform
   # config and /etc files.
   mkSystemModule =
-    {
-      platform,
-      loadedFlag,
-      conflictFlag,
-      conflictPlatform,
-      platformConfig,
-      files,
-    }:
+    { platformConfig, files }:
     args@{
       config,
       lib,
@@ -142,16 +114,7 @@ let
       ];
       config = lib.mkIf cfg.enable (
         lib.mkMerge [
-          {
-            environment.systemPackages = [ cfg.package ];
-            assertions = [
-              {
-                assertion = !cfg.${conflictFlag};
-                message = "programs.${pname}: ${platform} cannot be used together with ${conflictPlatform}";
-              }
-            ];
-            programs.${pname}.${loadedFlag} = true;
-          }
+          { environment.systemPackages = [ cfg.package ]; }
           (withArgs platformConfig args)
           (lib.mkIf (files != { }) { environment.etc = mkFiles args files; })
         ]
@@ -160,19 +123,11 @@ let
 in
 {
   nixosModule = mkSystemModule {
-    platform = "nixosModule";
-    loadedFlag = "_nixosModuleLoaded";
-    conflictFlag = "_darwinModuleLoaded";
-    conflictPlatform = "darwinModule";
     platformConfig = nixosConfig;
     files = nixosFiles;
   };
 
   darwinModule = mkSystemModule {
-    platform = "darwinModule";
-    loadedFlag = "_darwinModuleLoaded";
-    conflictFlag = "_nixosModuleLoaded";
-    conflictPlatform = "nixosModule";
     platformConfig = darwinConfig;
     files = darwinFiles;
   };
@@ -194,10 +149,7 @@ in
       ];
       config = lib.mkIf cfg.enable (
         lib.mkMerge [
-          {
-            home.packages = [ cfg.package ];
-            programs.${pname}._homeManagerModuleLoaded = true;
-          }
+          { home.packages = [ cfg.package ]; }
           (withArgs hmConfig args)
           (lib.mkIf (hmFiles != { }) { home.file = mkFiles args hmFiles; })
         ]

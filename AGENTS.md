@@ -39,7 +39,7 @@ Tests use stub modules (`tests/stubs.nix`) to provide minimal NixOS-like and hom
 
 Each shell exposes three modules: `nixosModules.<name>`, `darwinModules.<name>`, `homeManagerModules.<name>`.
 
-- **nixosModule and darwinModule are mutually exclusive** — importing both for the same shell triggers an assertion failure. The two modules write the same `/etc` files with platform-specific content.
+- **nixosModule and darwinModule are mutually exclusive.** The two modules declare the same options, so a configuration that imports both stops with an "option already declared" error. The two modules write the same `/etc` files with platform-specific content.
 - **homeManagerModule composes with either** system module. It writes only files in `$HOME`. A POSIX shell writes `~/.<name>rc` and `~/.profile`; when home-manager `programs.bash` is enabled, it adds its login code to `programs.bash.profileExtra` and does not write `~/.profile`.
 
 The module composition pattern in `flake.nix` must remain:

@@ -24,7 +24,7 @@ sh.nix supplies [NixOS](https://nixos.org), [nix-darwin](https://github.com/nix-
 
 A module installs `programs.<name>.package`. The default value is `pkgs.<name>`. Apply `overlays.default` to use the packages of this flake.
 
-The NixOS module and the nix-darwin module of one shell are mutually exclusive. An assertion stops the evaluation if a configuration imports both. The home-manager module operates with either system module.
+The NixOS module and the nix-darwin module of one shell are mutually exclusive. They declare the same options, so the evaluation stops with an "option already declared" error if a configuration imports both. The home-manager module operates with either system module.
 
 ## Usage
 
