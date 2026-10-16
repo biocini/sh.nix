@@ -2,7 +2,7 @@ name: update-rc-nightly
 
 on:
   schedule:
-    - cron: "0 6 * * *"
+    - cron: "0 8 * * *"
   workflow_dispatch:
 
 jobs:
@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -63,6 +64,8 @@ jobs:
 
       - name: commit if changed
         if: steps.master.outputs.sha != steps.current.outputs.rev
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -73,4 +76,6 @@ jobs:
           fi
           git add pkgs/rc/nightly.nix
           git commit -m "rc: update to unstable-${{ steps.master.outputs.date }} (${{ steps.prefetch.outputs.hash }})"
+          git pull --rebase origin master
           git push
+          gh workflow run check.yml --ref master

@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -56,10 +57,14 @@ jobs:
 
       - name: commit if changed
         if: steps.release.outputs.version != steps.current.outputs.version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pkgs/ksh93/stable.nix
           git commit -m "ksh-stable: update to ${{ steps.release.outputs.version }} (${{ steps.prefetch.outputs.hash }})"
+          git pull --rebase origin master
           git push
+          gh workflow run check.yml --ref master
