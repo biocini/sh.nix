@@ -18,7 +18,7 @@ let
       environment.shells = [ "${cfg.package}${cfg.package.passthru.shellPath or "/bin/${name}"}" ];
       programs.${name} = {
         interactiveShellInit = env.interactiveShellInit;
-        shellAliases = lib.mkDefault env.shellAliases;
+        shellAliases = lib.mapAttrs (_: lib.mkDefault) env.shellAliases;
       };
     };
 in
@@ -38,7 +38,7 @@ in
       env = envBridge.homeManager { inherit config; };
 
       sessionVariablesStr = lib.concatStringsSep "\n" (
-        lib.mapAttrsToList (k: v: "export ${k}=${lib.escapeShellArg (toString v)}") cfg.sessionVariables
+        lib.mapAttrsToList (k: v: "export ${k}=\"${toString v}\"") cfg.sessionVariables
       );
 
       # Login code for this shell only. ~/.profile is read by every POSIX
@@ -61,7 +61,7 @@ in
     lib.mkMerge [
       {
         programs.${name} = {
-          shellAliases = lib.mkDefault env.shellAliases;
+          shellAliases = lib.mapAttrs (_: lib.mkDefault) env.shellAliases;
           initExtra = lib.mkIf (cfg.logoutExtra != "") (
             lib.mkAfter ''
               trap ". $HOME/.${name}_logout" EXIT

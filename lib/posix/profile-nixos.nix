@@ -1,6 +1,6 @@
 # Unified /etc/profile generator for NixOS.
 # Reads the POSIX shell registry and generates a single /etc/profile
-# with a guard chain that dispatches to each shell's rc file.
+# with a guard chain that selects the login code and rc file of each shell.
 {
   config,
   lib,
@@ -12,7 +12,20 @@ let
   # Import registry to ensure _shnix.posixShells option is declared
   registry = import ./registry.nix;
 
-  dispatch = import ./dispatch.nix { inherit config lib; };
+  # programs.bash.shellInit and programs.bash.loginShellInit contain
+  # environment.shellInit and environment.loginShellInit.
+  bash = config.programs.bash or { };
+  dispatch = import ./dispatch.nix {
+    inherit config lib;
+    bashInit =
+      if bash.enable or false then
+        ''
+          ${bash.shellInit or ""}
+          ${bash.loginShellInit or ""}
+        ''
+      else
+        null;
+  };
 in
 {
   imports = [ registry ];
@@ -33,8 +46,7 @@ in
           . ${config.system.build.setEnvironment}
       fi
 
-      ${config.environment.shellInit}
-      ${config.environment.loginShellInit}
+      ${dispatch.login}
 
       # Read system-wide modifications.
       if test -f /etc/profile.local; then
@@ -42,7 +54,7 @@ in
       fi
 
       # Dispatch to shell-specific rc
-      ${dispatch}
+      ${dispatch.rc}
     '';
   };
 }

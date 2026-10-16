@@ -76,7 +76,9 @@
         default = { };
         description = ''
           Environment variables to export at login. They are exported in
-          ~/.profile only when this shell reads it.
+          ~/.profile only when this shell reads it. Each value is put in
+          double quotes, so parameter expansion and command substitution
+          occur at shell runtime.
         '';
       };
 

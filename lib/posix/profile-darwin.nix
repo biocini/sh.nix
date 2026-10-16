@@ -1,6 +1,6 @@
 # Unified /etc/profile generator for nix-darwin.
 # Reads the POSIX shell registry and generates a single /etc/profile
-# with a guard chain that dispatches to each shell's rc file.
+# with a guard chain that selects the login code and rc file of each shell.
 #
 # On macOS, /usr/libexec/path_helper prepends system paths (including
 # /etc/paths.d/* entries) to PATH.  Nix-darwin's set-environment script
@@ -63,8 +63,7 @@ in
 
           ${pathHelperRecovery}
 
-          ${config.environment.shellInit}
-          ${config.environment.loginShellInit}
+          ${dispatch.login}
 
           # Read system-wide modifications.
           if test -f /etc/profile.local; then
@@ -72,7 +71,7 @@ in
           fi
 
           # Dispatch to shell-specific rc
-          ${dispatch}
+          ${dispatch.rc}
         '';
 
         # Stock files that activation may move to /etc/profile.before-nix-darwin.

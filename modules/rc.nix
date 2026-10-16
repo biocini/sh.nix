@@ -232,7 +232,7 @@ let
     {
       assertions = [ (aliasAssertion cfg) ];
       environment.shells = [ "${cfg.package}${cfg.package.passthru.shellPath or "/bin/rc"}" ];
-      programs.rc.shellAliases = lib.mkDefault env.shellAliases;
+      programs.rc.shellAliases = lib.mapAttrs (_: lib.mkDefault) env.shellAliases;
     };
 
   # /etc/rcrc. The global environment comes first;
@@ -348,7 +348,7 @@ shnixLib.mkShellModule {
     in
     {
       assertions = [ (aliasAssertion cfg) ];
-      programs.rc.shellAliases = lib.mkDefault env.shellAliases;
+      programs.rc.shellAliases = lib.mapAttrs (_: lib.mkDefault) env.shellAliases;
     };
 
   nixosFiles = systemFiles envBridge.nixos "";

@@ -62,6 +62,18 @@
         type = lib.types.bool;
         default = false;
       };
+      programs.bash.enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+      };
+      programs.bash.shellInit = lib.mkOption {
+        type = lib.types.lines;
+        default = "";
+      };
+      programs.bash.loginShellInit = lib.mkOption {
+        type = lib.types.lines;
+        default = "";
+      };
       security.wrapperDir = lib.mkOption {
         type = lib.types.nullOr lib.types.path;
         default = null;

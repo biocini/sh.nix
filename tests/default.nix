@@ -708,7 +708,7 @@ lib.mapAttrs'
               programs.ksh.sessionVariables.FOO = "bar";
             }).home.file.".profile".text;
         in
-        lib.hasInfix ''if [ -n "''${KSH_VERSION:-}" ]; then'' text && lib.hasInfix "export FOO=bar" text;
+        lib.hasInfix ''if [ -n "''${KSH_VERSION:-}" ]; then'' text && lib.hasInfix ''export FOO="bar"'' text;
       expected = true;
     };
 
@@ -729,6 +729,148 @@ lib.mapAttrs'
         ownProfile = false;
         inBash = true;
       };
+    };
+
+    "home-manager ksh sessionVariables expand at runtime" = {
+      expr = lib.hasInfix ''export P="$HOME/bin:$PATH"'' (
+        (hmCfg self.homeManagerModules.ksh {
+          programs.ksh.enable = true;
+          programs.ksh.sessionVariables.P = "$HOME/bin:$PATH";
+        }).home.file.".profile".text
+      );
+      expected = true;
+    };
+
+    "ksh aliases merge with environment.shellAliases" = {
+      expr =
+        let
+          text = kshrcOn (
+            nixosCfg self.nixosModules.ksh {
+              programs.ksh.enable = true;
+              programs.ksh.shellAliases.g = "git";
+              environment.shellAliases = {
+                la = "ls -a";
+                g = "grep";
+              };
+            }
+          );
+        in
+        {
+          env = lib.hasInfix "alias -- la='ls -a'" text;
+          user = lib.hasInfix "alias -- g=git" text;
+          overridden = lib.hasInfix "grep" text;
+        };
+      expected = {
+        env = true;
+        user = true;
+        overridden = false;
+      };
+    };
+
+    "home-manager ksh aliases merge with home.shellAliases" = {
+      expr =
+        let
+          text =
+            (hmCfg self.homeManagerModules.ksh {
+              programs.ksh.enable = true;
+              programs.ksh.shellAliases.g = "git";
+              home.shellAliases.la = "ls -a";
+            }).home.file.".kshrc".text;
+        in
+        lib.hasInfix "alias -- la='ls -a'" text && lib.hasInfix "alias -- g=git" text;
+      expected = true;
+    };
+
+    "rc functions merge with environment.shellAliases" = {
+      expr =
+        let
+          text = rcrcOn (
+            nixosCfg self.nixosModules.rc {
+              programs.rc.enable = true;
+              programs.rc.shellAliases.g = "git";
+              environment.shellAliases.la = "ls -a";
+            }
+          );
+        in
+        lib.hasInfix "fn la { ls -a $* }" text && lib.hasInfix "fn g { git $* }" text;
+      expected = true;
+    };
+
+    "profile lets ksh read its rc file through ENV" = {
+      expr =
+        let
+          text =
+            (nixosCfg self.nixosModules.ksh {
+              programs.ksh.enable = true;
+              programs.ksh.loginShellInit = "echo ksh-login";
+            }).environment.etc.profile.text;
+        in
+        {
+          env = lib.hasInfix "export ENV=/etc/kshrc" text;
+          login = lib.hasInfix "echo ksh-login" text;
+          sourced = lib.hasInfix ". /etc/kshrc" text;
+        };
+      expected = {
+        env = true;
+        login = true;
+        sourced = false;
+      };
+    };
+
+    "nixos profile gives bash the programs.bash login code" = {
+      expr =
+        let
+          text =
+            (nixosCfg self.nixosModules.ksh (
+              { config, ... }:
+              {
+                programs.ksh.enable = true;
+                environment.shellInit = "echo SHELL_INIT";
+                environment.loginShellInit = "echo LOGIN_INIT";
+                programs.bash = {
+                  enable = true;
+                  shellInit = "echo BASH_SHELL_INIT\n${config.environment.shellInit}";
+                  loginShellInit = config.environment.loginShellInit;
+                };
+              }
+            )).environment.etc.profile.text;
+        in
+        lib.hasInfix ''
+          if [ -n "''${BASH_VERSION:-}" ]; then
+            echo BASH_SHELL_INIT
+          echo SHELL_INIT
+          echo LOGIN_INIT
+
+          else
+            echo SHELL_INIT
+          echo LOGIN_INIT
+
+          fi
+        '' text;
+      expected = true;
+    };
+
+    "nixos profile login branches are never empty" = {
+      expr = lib.hasInfix "then\n  :\nelse\n  :\nfi" (
+        (nixosCfg self.nixosModules.ksh {
+          programs.ksh.enable = true;
+          programs.bash.enable = true;
+        }).environment.etc.profile.text
+      );
+      expected = true;
+    };
+
+    "darwin profile runs environment login code once" = {
+      expr =
+        let
+          text =
+            (darwinCfg self.darwinModules.ksh {
+              programs.ksh.enable = true;
+              environment.loginShellInit = "echo LOGIN_INIT";
+            }).environment.etc.profile.text;
+        in
+        builtins.length (builtins.filter builtins.isList (builtins.split "echo LOGIN_INIT" text));
+      expected = 1;
     };
 
     "rc darwin module accepts list variables" = {
