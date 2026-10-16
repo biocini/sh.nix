@@ -758,6 +758,121 @@ lib.mapAttrs'
       expected = true;
     };
 
+    "rc /etc/rcrc sets the NixOS environment once" = {
+      expr =
+        let
+          text = rcrcOn (
+            nixosCfg self.nixosModules.rc {
+              programs.rc.enable = true;
+              environment.profiles = [
+                "$HOME/.nix-profile"
+                "/run/current-system/sw"
+              ];
+              environment.profileRelativeEnvVars.PATH = [ "/bin" ];
+              environment.profileRelativeEnvVars.XDG_DATA_DIRS = [ "/share" ];
+              environment.homeBinInPath = true;
+              environment.localBinInPath = true;
+              security.wrapperDir = "/run/wrappers/bin";
+            }
+          );
+        in
+        map (l: lib.hasInfix l text) [
+          "if (~ $#__NIXOS_SET_ENVIRONMENT_DONE 0) {\n  __NIXOS_SET_ENVIRONMENT_DONE = 1\n"
+          ''path = ($"HOME^'/.local/bin' $"HOME^'/bin' '/run/wrappers/bin' $"HOME^'/.nix-profile/bin' '/run/current-system/sw/bin')''
+          ''XDG_DATA_DIRS = $"HOME^'/.nix-profile/share:/run/current-system/sw/share''
+          ''NIX_PROFILES = '/run/current-system/sw '^$"HOME^'/.nix-profile''
+          "/etc/paths"
+        ];
+      expected = [
+        true
+        true
+        true
+        true
+        false
+      ];
+    };
+
+    "rc darwin /etc/rcrc takes PATH from systemPath and adds /etc/paths directories" = {
+      expr =
+        let
+          text = rcrcOn (
+            darwinCfg self.darwinModules.rc {
+              programs.rc.enable = true;
+              environment.systemPath = [
+                "/a/bin:/b/bin"
+                "/usr/bin"
+              ];
+            }
+          );
+        in
+        map (l: lib.hasInfix l text) [
+          "if (~ $#__NIX_DARWIN_SET_ENVIRONMENT_DONE 0) {"
+          "path = ('/a/bin' '/b/bin' '/usr/bin')"
+          "{/bin/cat /etc/paths /etc/paths.d/* >[2]/dev/null}"
+          "if (! ~ $_d $path) path = ($path $_d)"
+        ];
+      expected = [
+        true
+        true
+        true
+        true
+      ];
+    };
+
+    "rc ~/.rcrc sets the home-manager session environment once" = {
+      expr =
+        let
+          text =
+            (hmCfg self.homeManagerModules.rc {
+              programs.rc.enable = true;
+              home.sessionVariables.EDITOR = "vim";
+              home.sessionPath = [ "$HOME/.local/bin" ];
+              home.sessionSearchVariables.MANPATH = [ "/m" ];
+            }).home.file.".rcrc".text;
+        in
+        lib.hasInfix ''
+          if (~ $#__HM_SESS_VARS_SOURCED 0) {
+            __HM_SESS_VARS_SOURCED = 1
+            EDITOR = 'vim'
+            if (~ $#MANPATH 0 || ~ $"MANPATH ''') { MANPATH = '/m' } else { MANPATH = '/m'^':'^$"MANPATH }
+            path = ($"HOME^'/.local/bin' $path)
+          }
+        '' text;
+      expected = true;
+    };
+
+    "rc values follow POSIX double-quote rules" = {
+      expr =
+        let
+          text = rcrcOn (
+            nixosCfg self.nixosModules.rc {
+              programs.rc.enable = true;
+              programs.rc.sessionVariables = {
+                A = ''\$x \\ \" \a'';
+                B = "\${X:-}/b";
+                C = "\${X:-/d}";
+                D = "\${X-$HOME/d}";
+                E = "\${E:-\${HOME}/e}";
+              };
+            }
+          );
+        in
+        lib.hasInfix ''
+          A = '$x \ " \a'
+          B = $"X^'/b'
+          if (~ $#X 0 || ~ $"X ''') { _shnix_C_0 = '/d' } else { _shnix_C_0 = $"X }
+          C = $"_shnix_C_0
+          _shnix_C_0 = ()
+          if (~ $#X 0) { _shnix_D_0 = $"HOME^'/d' } else { _shnix_D_0 = $"X }
+          D = $"_shnix_D_0
+          _shnix_D_0 = ()
+          if (~ $#E 0 || ~ $"E ''') { _shnix_E_0 = $"HOME^'/e' } else { _shnix_E_0 = $"E }
+          E = $"_shnix_E_0
+          _shnix_E_0 = ()
+        '' text;
+      expected = true;
+    };
+
     "rc quotes single quotes by doubling" = {
       expr = lib.hasInfix "Q = 'it''s'" (
         rcrcOn (

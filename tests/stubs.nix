@@ -50,6 +50,22 @@
         type = lib.types.attrsOf (lib.types.listOf lib.types.str);
         default = { };
       };
+      environment.profiles = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+      };
+      environment.homeBinInPath = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+      };
+      environment.localBinInPath = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+      };
+      security.wrapperDir = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+      };
       assertions = lib.mkOption {
         type = lib.types.listOf lib.types.anything;
         default = [ ];
@@ -96,6 +112,14 @@
             lib.types.path
           ]
         );
+        default = { };
+      };
+      home.sessionPath = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+      };
+      home.sessionSearchVariables = lib.mkOption {
+        type = lib.types.attrsOf (lib.types.listOf lib.types.str);
         default = { };
       };
       home.sessionVariablesPackage = lib.mkOption {

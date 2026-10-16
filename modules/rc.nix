@@ -6,30 +6,179 @@ let
   # rc quoting: a single-quoted word with each ' doubled.
   rcQuote = lib: s: "'" + lib.replaceStrings [ "'" ] [ "''" ] s + "'";
 
-  # Converts a POSIX-style value to an rc word. $NAME and ${NAME} become
-  # rc variable references ($"NAME, flattened to one string); all other
-  # text is quoted literally. Lists are joined with ":".
-  rcValue =
-    lib: v:
+  # Converts values with POSIX double-quote syntax to rc words. Each value
+  # gives one word:
+  #   \$ \` \" \\           the literal character
+  #   $NAME ${NAME}         $"NAME, the variable flattened to one string
+  #   ${NAME:-word}         word if NAME is unset or empty, else $"NAME
+  #   ${NAME-word}          word if NAME is unset, else $"NAME
+  # With an empty word, both forms are $"NAME.
+  # All other text is literal. A default needs rc code before the word
+  # (pre) and after it (post), with a temporary variable that has the
+  # prefix tmp.
+  rcWords =
+    lib: tmp: values:
     let
-      s = if lib.isList v then lib.concatStringsSep ":" v else toString v;
-      parts = builtins.split "\\$\\{([A-Za-z_][A-Za-z0-9_]*)}|\\$([A-Za-z_][A-Za-z0-9_]*)" s;
-      toWord =
-        p:
-        if lib.isList p then
-          "$\"" + (if lib.elemAt p 0 != null then lib.elemAt p 0 else lib.elemAt p 1)
-        else if p == "" then
-          null
-        else
-          rcQuote lib p;
-      words = lib.filter (w: w != null) (map toWord parts);
-    in
-    if words == [ ] then "''" else lib.concatStringsSep "^" words;
+      name = "[A-Za-z_][A-Za-z0-9_]*";
+      # A default word: text, escapes and references, without "}".
+      word = "((\\\\.|[^}$\\\\]|\\$" + name + "|\\$\\{" + name + "})*)";
+      re = ''\\([$`"\\])|\$\{(${name})(:?-)${word}}|\$\{(${name})}|\$(${name})'';
 
-  # Generated rc file. vars and init come from the platform config.
+      # Items are { lit = string; } or { ref = rc word; }.
+      item =
+        acc: p:
+        let
+          g = lib.elemAt p;
+          add = x: acc // { items = acc.items ++ [ x ]; };
+          var = "${tmp}${toString acc.n}";
+          dflt = rcWords lib "${var}_" [ (g 3) ];
+          test = if g 2 == ":-" then "~ $#${g 1} 0 || ~ $\"${g 1} ''" else "~ $#${g 1} 0";
+        in
+        if lib.isString p then
+          add { lit = p; }
+        else if g 0 != null then
+          add { lit = g 0; }
+        else if g 1 != null && g 3 == "" then
+          add { ref = "$\"${g 1}"; }
+        else if g 1 != null then
+          acc
+          // {
+            n = acc.n + 1;
+            items = acc.items ++ [ { ref = "$\"${var}"; } ];
+            pre =
+              acc.pre
+              ++ dflt.pre
+              ++ [ "if (${test}) { ${var} = ${lib.head dflt.words} } else { ${var} = $\"${g 1} }" ]
+              ++ dflt.post;
+            post = acc.post ++ [ "${var} = ()" ];
+          }
+        else
+          add { ref = "$\"" + (if g 5 != null then g 5 else g 6); };
+
+      # Joins adjacent literals, quotes them and concatenates with ^.
+      render =
+        items:
+        let
+          merged = lib.foldl' (
+            out: x:
+            if x ? lit && out != [ ] && (lib.last out) ? lit then
+              lib.init out ++ [ { lit = (lib.last out).lit + x.lit; } ]
+            else
+              out ++ [ x ]
+          ) [ ] (lib.filter (x: !(x ? lit) || x.lit != "") items);
+          word = x: if x ? lit then rcQuote lib x.lit else x.ref;
+        in
+        if merged == [ ] then "''" else lib.concatMapStringsSep "^" word merged;
+
+      value =
+        acc: v:
+        let
+          r = lib.foldl' item (acc // { items = [ ]; }) (builtins.split re v);
+        in
+        r // { words = acc.words ++ [ (render r.items) ]; };
+    in
+    builtins.removeAttrs
+      (lib.foldl' value {
+        n = 0;
+        pre = [ ];
+        post = [ ];
+        words = [ ];
+      } values)
+      [
+        "items"
+        "n"
+      ];
+
+  # rc lines that assign values to a variable. More than one value gives
+  # an rc list. A list value of a variable is joined with ":".
+  rcAssignList =
+    lib: name: values: tail:
+    let
+      r = rcWords lib "_shnix_${name}_" values;
+      words = lib.concatStringsSep " " (r.words ++ tail);
+    in
+    r.pre ++ [ "${name} = ${if lib.length r.words + lib.length tail == 1 then words else "(${words})"}" ] ++ r.post;
+
+  rcAssign =
+    lib: name: v:
+    rcAssignList lib name [ (if lib.isList v then lib.concatStringsSep ":" v else toString v) ] [ ];
+
+  # The body of a block that runs once per login session: the marker
+  # variable, then the assignments.
+  onceBlock =
+    lib: marker: lines:
+    let
+      body = [ "${marker} = 1" ] ++ lines;
+    in
+    ''
+      if (~ $#${marker} 0) {
+        ${lib.concatStringsSep "\n  " body}
+      }
+    '';
+
+  # The environment that set-environment exports on NixOS and nix-darwin.
+  systemEnvironment =
+    lib: env:
+    ''
+      # Global environment. A shell that inherits it does not set it again.
+    ''
+    + onceBlock lib env.setEnvironmentDone (
+      lib.optionals (env.path != [ ]) (rcAssignList lib "path" env.path [ ])
+      ++ lib.concatLists (lib.mapAttrsToList (rcAssign lib) env.variables)
+    );
+
+  # path_helper(8) puts the directories from /etc/paths and /etc/paths.d
+  # first. Here the Nix directories stay first and the other directories
+  # go after them. The separator is a newline, so a directory name can
+  # contain spaces.
+  darwinPaths = ''
+
+    # Directories from /etc/paths and /etc/paths.d that are not in $path.
+    for (_d in `` ('
+    ') {/bin/cat /etc/paths /etc/paths.d/* >[2]/dev/null}) {
+      if (! ~ $_d $path) path = ($path $_d)
+    }
+    _d = ()
+  '';
+
+  # The environment of hm-session-vars.sh: home.sessionVariables, then
+  # the directories of home.sessionSearchVariables before the current
+  # value of each variable.
+  hmEnvironment =
+    lib: env:
+    let
+      search =
+        name: dirs:
+        let
+          r = rcWords lib "_shnix_${name}_" [ (lib.concatStringsSep ":" dirs) ];
+          value = lib.head r.words;
+        in
+        if name == "PATH" then
+          rcAssignList lib "path" dirs [ "$path" ]
+        else
+          r.pre
+          ++ [
+            "if (~ $#${name} 0 || ~ $\"${name} '') { ${name} = ${value} } else { ${name} = ${value}^':'^$\"${name} }"
+          ]
+          ++ r.post;
+    in
+    ''
+      # home-manager session environment. A shell that inherits it does not
+      # set it again.
+    ''
+    + onceBlock lib env.sessionVariablesDone (
+      lib.concatLists (
+        lib.mapAttrsToList (rcAssign lib) env.sessionVariables
+        ++ lib.mapAttrsToList search env.sessionSearchVariables
+      )
+    );
+
+  # Generated rc file. The environment, vars and init come from the
+  # platform config.
   rcFile =
     {
       header,
+      environment,
       vars,
       init,
     }:
@@ -37,7 +186,7 @@ let
     let
       sessionVarsStr = lib.optionalString (vars != { }) (
         "# Session variables.\n"
-        + lib.concatStringsSep "\n" (lib.mapAttrsToList (k: v: "${k} = ${rcValue lib v}") vars)
+        + lib.concatStringsSep "\n" (lib.concatLists (lib.mapAttrsToList (rcAssign lib) vars))
         + "\n\n"
       );
       historyStr =
@@ -49,6 +198,7 @@ let
     ''
       # ${header}: DO NOT EDIT -- this file has been generated automatically.
 
+      ${environment}
       ${sessionVarsStr}# History file.
       history=${historyStr}
 
@@ -85,19 +235,21 @@ let
       programs.rc.shellAliases = lib.mkDefault env.shellAliases;
     };
 
-  # /etc/rcrc. Global environment.variables are exported first;
-  # programs.rc.sessionVariables override them.
-  systemFiles = bridge: {
-    "rcrc" = {
-      content =
-        args@{ config, ... }:
-        rcFile {
-          header = "/etc/rcrc";
-          vars = (bridge { inherit config; }).variables // args.cfg.sessionVariables;
-          init = cfg: cfg.loginShellInit;
-        } args;
+  # /etc/rcrc. The global environment comes first;
+  # programs.rc.sessionVariables override it.
+  systemFiles =
+    bridge: extra: {
+      "rcrc" = {
+        content =
+          args@{ config, lib, ... }:
+          rcFile {
+            header = "/etc/rcrc";
+            environment = systemEnvironment lib (bridge { inherit config; }) + extra;
+            vars = args.cfg.sessionVariables;
+            init = cfg: cfg.loginShellInit;
+          } args;
+      };
     };
-  };
 in
 
 shnixLib.mkShellModule {
@@ -145,9 +297,12 @@ shnixLib.mkShellModule {
         );
         default = { };
         description = ''
-          Environment variables to set in rc. Lists are joined with ":".
-          `$NAME` and `''${NAME}` expand at shell runtime; all other text
-          is literal.
+          Environment variables to set in each rc login shell, after the
+          global environment. Lists are joined with ":". Values use the
+          rules of a POSIX double-quoted string: `$NAME`, `''${NAME}`,
+          `''${NAME:-word}` and `''${NAME-word}` expand at shell runtime,
+          and a backslash before `$`, `` ` ``, `"` or `\` gives that
+          character. Command substitution is not supported.
         '';
       };
     };
@@ -160,8 +315,10 @@ shnixLib.mkShellModule {
         default = "";
         description = ''
           rc code for /etc/rcrc. rc reads /etc/rcrc only in login shells.
-          This option is not bridged from environment.interactiveShellInit,
-          because that option holds POSIX shell code.
+          environment.extraInit, environment.shellInit,
+          environment.loginShellInit and environment.interactiveShellInit
+          hold POSIX code and are not copied to /etc/rcrc; put rc code
+          with the same effect here.
         '';
       };
     };
@@ -194,8 +351,8 @@ shnixLib.mkShellModule {
       programs.rc.shellAliases = lib.mkDefault env.shellAliases;
     };
 
-  nixosFiles = systemFiles envBridge.nixos;
-  darwinFiles = systemFiles envBridge.darwin;
+  nixosFiles = systemFiles envBridge.nixos "";
+  darwinFiles = systemFiles envBridge.darwin darwinPaths;
 
   hmFiles = {
     ".rcrc" = {
@@ -203,7 +360,8 @@ shnixLib.mkShellModule {
         args@{ config, ... }:
         rcFile {
           header = "~/.rcrc";
-          vars = (envBridge.homeManager { inherit config; }).sessionVariables // args.cfg.sessionVariables;
+          environment = hmEnvironment args.lib (envBridge.homeManager { inherit config; });
+          vars = args.cfg.sessionVariables;
           init = cfg: cfg.initExtra;
         } args;
     };

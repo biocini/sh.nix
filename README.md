@@ -135,10 +135,32 @@ The default of `shellAliases` is `environment.shellAliases` on NixOS and nix-dar
 
 | File       | Platform      | Contents                                                       |
 | ---------- | ------------- | -------------------------------------------------------------- |
-| `/etc/rcrc` | NixOS, darwin | `environment.variables`, `sessionVariables`, history, prompt, functions, `loginShellInit` |
-| `~/.rcrc`  | home-manager  | `home.sessionVariables`, `sessionVariables`, history, prompt, functions, `initExtra` |
+| `/etc/rcrc` | NixOS, darwin | Global environment, `sessionVariables`, history, prompt, functions, `loginShellInit` |
+| `~/.rcrc`  | home-manager  | home-manager session environment, `sessionVariables`, history, prompt, functions, `initExtra` |
 
 The rc package of this flake reads `/etc/rcrc` and then `~/.rcrc` in login shells. If `$RCRC` is set, it reads only that file. The nixpkgs rc package does not read `/etc/rcrc`, so use `overlays.default` with the system modules.
+
+### Environment
+
+The rc files contain rc code only. rc does not run POSIX code.
+
+`/etc/rcrc` sets the variables that set-environment exports for POSIX shells:
+
+- `path`: on NixOS, `~/.local/bin` (`environment.localBinInPath`), `~/bin` (`environment.homeBinInPath`), the wrapper directory, and the `PATH` entries of `environment.profileRelativeEnvVars` for each profile. On nix-darwin, `environment.systemPath`.
+- `environment.variables` and, on NixOS, the other `environment.profileRelativeEnvVars`.
+- `NIX_PROFILES` and `NIX_USER_PROFILE_DIR`, from `environment.profiles`.
+
+These assignments run only if the set-environment marker variable (`__NIXOS_SET_ENVIRONMENT_DONE` or `__NIX_DARWIN_SET_ENVIRONMENT_DONE`) is not set. Then they set it. A login shell that inherits the environment keeps it. On nix-darwin, `/etc/rcrc` then adds the directories from `/etc/paths` and `/etc/paths.d` that are not in `$path` to the end of `$path`.
+
+`~/.rcrc` sets `home.sessionVariables`, puts `home.sessionPath` before `$path`, and puts each `home.sessionSearchVariables` entry before its variable. These assignments run only if `__HM_SESS_VARS_SOURCED` is not set.
+
+`environment.extraInit`, `environment.shellInit`, `environment.loginShellInit`, `environment.interactiveShellInit` and `home.sessionVariablesExtra` contain POSIX code. The rc files do not contain this code. Write rc code with the same effect in `loginShellInit` or `initExtra`, for example:
+
+```nix
+programs.rc.loginShellInit = ''
+  SSH_AUTH_SOCK = `{gpgconf --list-dirs agent-ssh-socket}
+'';
+```
 
 ### Options
 
@@ -147,17 +169,17 @@ The rc package of this flake reads `/etc/rcrc` and then `~/.rcrc` in login shell
 | `historyFile`      | all           | `str`                                    | `".rc_history"` | A relative path is relative to `$home` |
 | `prompt`           | all           | `listOf str`                             | `[ "; " "" ]`   | Primary and continuation prompt |
 | `shellAliases`     | all           | `attrsOf str`                            | global aliases  | `ll = "ls -l"` gives `fn ll { ls -l $* }`. A value must not contain `}`. |
-| `sessionVariables` | all           | `attrsOf (str \| int \| path \| listOf str)` | `{}`        | These values override the global variables |
+| `sessionVariables` | all           | `attrsOf (str \| int \| path \| listOf str)` | `{}`        | Set in each login shell, after the global environment |
 | `loginShellInit`   | NixOS, darwin | `lines`                                  | `""`            | rc code in `/etc/rcrc` |
 | `initExtra`        | home-manager  | `lines`                                  | `""`            | rc code in `~/.rcrc` |
 
-Variable values use these rules:
+Variable values use the rules of a POSIX double-quoted string. They expand when rc reads the file:
 
 - sh.nix joins a list with `:`.
-- `$NAME` and `${NAME}` become rc references. They expand when rc reads the file.
-- All other text is literal.
-
-`environment.interactiveShellInit` contains POSIX code. The rc module does not copy it into `/etc/rcrc`.
+- `$NAME` and `${NAME}` give the value of `NAME`.
+- `${NAME:-word}` gives `word` if `NAME` is unset or empty. `${NAME-word}` gives `word` if `NAME` is unset.
+- `\$`, `` \` ``, `\"` and `\\` give the character after the backslash.
+- All other text is literal. Command substitution (`$(...)`) is not supported.
 
 ## Library
 
@@ -205,16 +227,21 @@ Extracts the global environment configuration as plain attribute sets:
 
 ```nix
 envBridge.nixos { inherit config; }
-# => { shellAliases, shellInit, interactiveShellInit, variables }
+# => { shellAliases, shellInit, interactiveShellInit, setEnvironmentDone, path, variables }
 
 envBridge.darwin { inherit config; }
-# => { shellAliases, shellInit, interactiveShellInit, variables }
+# => { shellAliases, shellInit, interactiveShellInit, setEnvironmentDone, path, variables }
 
 envBridge.homeManager { inherit config; }
-# => { shellAliases, sessionVariables }
+# => { shellAliases, sessionVariables, sessionVariablesDone, sessionSearchVariables }
 ```
 
-`shellAliases` does not contain null entries, and its values are strings.
+- `shellAliases` does not contain null entries, and its values are strings.
+- `path` is the `PATH` that set-environment exports, as a list of directories.
+- `variables` contains the other variables that set-environment exports, including the variables that `environment.extraInit` exports from `environment.profiles`.
+- `setEnvironmentDone` and `sessionVariablesDone` are the names of the marker variables of set-environment and `hm-session-vars.sh`.
+- `sessionSearchVariables` maps each variable to the directories to put before its value. `PATH` holds `home.sessionPath`.
+- Values can contain `$HOME`, `$USER` and other POSIX references.
 
 See [`docs/implementing-a-shell.md`](docs/implementing-a-shell.md) for the full guide.
 

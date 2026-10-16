@@ -102,15 +102,21 @@ A non-POSIX shell uses `mkShellModule`. The module author supplies the options, 
 
 ```nix
 envBridge.nixos { inherit config; }
-# => { shellAliases, shellInit, interactiveShellInit, variables }
+# => { shellAliases, shellInit, interactiveShellInit, setEnvironmentDone, path, variables }
 
 envBridge.homeManager { inherit config; }
-# => { shellAliases, sessionVariables }
+# => { shellAliases, sessionVariables, sessionVariablesDone, sessionSearchVariables }
 ```
 
 Use `envBridge` for all global environment data. Do not read `config.environment.*` or `config.home.*` directly.
 
 `shellInit` and `interactiveShellInit` contain POSIX shell code. Do not copy them into the configuration of a non-POSIX shell. Give the shell its own option for code in its own syntax.
+
+A login shell needs the global environment that POSIX shells get from set-environment and `hm-session-vars.sh`:
+
+- Set `path` and `variables` only if the variable named by `setEnvironmentDone` is not set, and then set it. Do the same for the home-manager data and `sessionVariablesDone`.
+- Put the directories of each `sessionSearchVariables` entry before the current value of its variable.
+- The values use the syntax of POSIX double-quoted strings, for example `$HOME/.nix-profile/bin`. Convert the references to the syntax of the shell. `modules/rc.nix` has a converter for rc.
 
 `variables` can contain lists on NixOS and nix-darwin. nix-darwin always sets `XDG_CONFIG_DIRS` and `XDG_DATA_DIRS` as lists. A variable option must accept lists, or the module must convert them.
 
