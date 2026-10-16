@@ -267,4 +267,4 @@ GitHub workflows update `pkgs/ksh93` and `pkgs/rc` each day. A workflow builds t
 
 ## License
 
-MIT
+BSD-3-Clause. See [LICENSE](LICENSE).
