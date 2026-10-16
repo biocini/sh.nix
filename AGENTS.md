@@ -59,6 +59,7 @@ Do **not** inline `mkPosixShellModule` in `flake.nix` — the returned functions
 - They use `set -euo pipefail` and hash validation (`[[ "$hash" =~ ^sha256-[A-Za-z0-9+/=]+$ ]]`)
 - Nightly pins to commit SHA (not mutable `dev` ref) with a change guard
 - Each workflow builds the updated package and runs `nix flake check` before it pushes
+- `.github/workflows/check.yml` builds all packages and runs `nix flake check` on x86_64-linux, aarch64-linux and aarch64-darwin for each push to master and each pull request
 - The workflows edit `pkgs/ksh93/stable.nix`, `pkgs/ksh93/nightly.nix` and `pkgs/rc/nightly.nix` with `sed`. Each of these files must contain exactly one `version = "…";`, one `hash = "…";` and (nightly) one `rev = "…";` line. Put shared build code in `pkgs/ksh93/generic.nix`.
 - Do not change versions or hashes in `pkgs/` by hand; let the workflows do version updates
 - Tests must not contain package versions, because the workflows change them

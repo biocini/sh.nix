@@ -263,7 +263,7 @@ nix flake check
 
 The tests are in `tests/default.nix`. nix-unit finds each attribute whose name starts with `test`. The tests use the stub modules in `tests/stubs.nix`, not the full NixOS, nix-darwin or home-manager modules.
 
-GitHub workflows update `pkgs/ksh93` and `pkgs/rc` each day. A workflow builds the package and runs `nix flake check` before it pushes the update.
+GitHub workflows update `pkgs/ksh93` and `pkgs/rc` each day. A workflow builds the package and runs `nix flake check` before it pushes the update. The `check` workflow builds all packages and runs `nix flake check` on Linux (x86_64, aarch64) and macOS for each push to master and each pull request.
 
 ## License
 
