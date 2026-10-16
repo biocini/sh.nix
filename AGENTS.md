@@ -8,7 +8,7 @@ This project provides composable building blocks for shell module authors, not a
 - **`lib.envBridge`** — pure data extraction from `config.environment.*` / `config.home.*`
 - **`lib/posix/`** — decomposed POSIX-family helpers (options, configs, file generators) consumed by `mkPosixShellModule`
 
-New shells should use `envBridge` for all global environment integration. Do not reach into `config.environment.*` directly. See `docs/implementing-a-shell.md` for the downstream implementer guide.
+New shells should use `envBridge` for all global environment integration. Do not reach into `config.environment.*` directly. See `docs/implementing-a-shell.md`.
 
 ## Supported shells
 
@@ -50,7 +50,7 @@ nixosModules.ksh = { ... }: {
 };
 ```
 
-Do **not** inline `mkPosixShellModule` in `flake.nix` — the returned functions must be imported from a separate file (`modules/ksh-base.nix`) so NixOS module file tracking works correctly. Inlining causes "option already declared" errors when both modules are present.
+Do **not** call `mkPosixShellModule` in `flake.nix`. Call it in a separate file (`modules/ksh-base.nix`) and import that file. The module system identifies a module by its file. An inline call gives "option already declared" errors when a configuration imports two modules of the shell.
 
 ## CI Workflows
 

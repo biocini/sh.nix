@@ -71,8 +71,11 @@ All POSIX login shells read `/etc/profile`. The generated file does these steps 
 
 1. It sources the system `set-environment` script, if a parent process did not source it.
 2. On darwin, it runs `/usr/libexec/path_helper`. It adds to the end of `PATH` only the directories that are not already in `PATH`, so the Nix directories stay first.
-3. It runs `environment.shellInit`, `environment.loginShellInit` and `/etc/profile.local`.
-4. It runs a guard chain. bash is always the first entry and sources `/etc/bashrc`. Each other registered shell has a guard, for example `[ -n "${KSH_VERSION:-}" ]`. The matching entry exports `ENV=/etc/kshrc`, runs `programs.<name>.loginShellInit` and sources the rc file.
+3. It runs the login code. On NixOS with `programs.bash.enable`, bash runs `programs.bash.shellInit` and `programs.bash.loginShellInit`. These options contain the `environment` code. All other shells run `environment.shellInit` and `environment.loginShellInit`.
+4. It runs `/etc/profile.local`.
+5. It runs a guard chain. bash is always the first entry and sources `/etc/bashrc`. Each other registered shell has a guard, for example `[ -n "${KSH_VERSION:-}" ]`. The matching entry exports `ENV=/etc/kshrc` and runs `programs.<name>.loginShellInit`.
+
+The shell then reads `~/.profile`. An interactive shell then reads the file in `$ENV`. Thus `~/.kshrc` runs after the login files.
 
 A shell name without a known guard uses `[ -n "${<NAME>_VERSION:-}" ]`. The known guards are in `lib/posix/guards.nix`.
 
@@ -100,14 +103,14 @@ All platforms:
 | `package`      | `package`     | `pkgs.<name>`             | The shell package               |
 | `histFile`     | `str`         | `"$HOME/.<name>_history"` | History file. The shell expands parameters in it. |
 | `histSize`     | `int`         | `2000` (ksh: `10000`)     | History lines in memory         |
-| `shellAliases` | `attrsOf str` | global aliases            | Aliases for interactive shells  |
+| `shellAliases` | `attrsOf str` | global aliases            | Aliases for interactive shells. An entry replaces the global alias with the same name. |
 
 NixOS and nix-darwin:
 
 | Option                 | Type    | Default                            | Description                               |
 | ---------------------- | ------- | ---------------------------------- | ----------------------------------------- |
 | `loginShellInit`       | `lines` | `""`                               | Code in `/etc/profile` for this shell only |
-| `interactiveShellInit` | `lines` | `environment.interactiveShellInit` | Code in the system rc file                |
+| `interactiveShellInit` | `lines` | `""`                               | Code in the system rc file, merged with `environment.interactiveShellInit` |
 
 home-manager:
 
@@ -115,7 +118,7 @@ home-manager:
 | ------------------ | ------------------------------ | ------- | ---------------------------------------------- |
 | `initExtra`        | `lines`                        | `""`    | Code in the user rc file                       |
 | `profileExtra`     | `lines`                        | `""`    | Login code in `~/.profile` for this shell only |
-| `sessionVariables` | `attrsOf (str \| int \| path)` | `{}`    | Variables that `~/.profile` exports for this shell only |
+| `sessionVariables` | `attrsOf (str \| int \| path)` | `{}`    | Variables that `~/.profile` exports for this shell only. Each value is in double quotes and expands at runtime. |
 | `logoutExtra`      | `lines`                        | `""`    | Code that runs when the shell exits            |
 
 ksh only, all platforms:
@@ -168,7 +171,7 @@ programs.rc.loginShellInit = ''
 | ------------------ | ------------- | ---------------------------------------- | --------------- | ----------- |
 | `historyFile`      | all           | `str`                                    | `".rc_history"` | A relative path is relative to `$home` |
 | `prompt`           | all           | `listOf str`                             | `[ "; " "" ]`   | Primary and continuation prompt |
-| `shellAliases`     | all           | `attrsOf str`                            | global aliases  | `ll = "ls -l"` gives `fn ll { ls -l $* }`. A value must not contain `}`. |
+| `shellAliases`     | all           | `attrsOf str`                            | global aliases  | `ll = "ls -l"` gives `fn ll { ls -l $* }`. An entry replaces the global alias with the same name. A value must not contain `}`. |
 | `sessionVariables` | all           | `attrsOf (str \| int \| path \| listOf str)` | `{}`        | Set in each login shell, after the global environment |
 | `loginShellInit`   | NixOS, darwin | `lines`                                  | `""`            | rc code in `/etc/rcrc` |
 | `initExtra`        | home-manager  | `lines`                                  | `""`            | rc code in `~/.rcrc` |
@@ -185,7 +188,7 @@ Variable values use the rules of a POSIX double-quoted string. They expand when 
 
 ### `lib.mkPosixShellModule { name, etcRcPath ?, homeRcPath ? }`
 
-Returns `{ nixosModule, darwinModule, homeManagerModule }` for a POSIX shell. The modules have the options in [POSIX shells](#options), and they register the shell in the `/etc/profile` guard chain.
+Returns `{ nixosModule, darwinModule, homeManagerModule }` for a POSIX shell. The modules have the options in [POSIX shells](#options), and they register the shell in the `/etc/profile` guard chain. The shell must read `/etc/profile` and `~/.profile` as a login shell, and the file in `$ENV` as an interactive shell.
 
 | Parameter    | Default             | Description                                  |
 | ------------ | ------------------- | -------------------------------------------- |
@@ -195,9 +198,9 @@ Returns `{ nixosModule, darwinModule, homeManagerModule }` for a POSIX shell. Th
 
 ```nix
 shnix.lib.mkPosixShellModule {
-  name = "yash";
-  etcRcPath = "yashrc";
-  homeRcPath = ".yashrc";
+  name = "mysh";
+  etcRcPath = "myshrc";
+  homeRcPath = ".myshrc";
 }
 ```
 

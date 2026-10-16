@@ -6,8 +6,8 @@ This guide shows how to make NixOS, nix-darwin and home-manager modules for a sh
 
 | Shell family  | Approach                      | Examples        |
 | ------------- | ----------------------------- | --------------- |
-| **POSIX**     | `mkPosixShellModule`          | ksh, mksh, yash |
-| **Non-POSIX** | `mkShellModule` + `envBridge` | rc, fish, elvish |
+| **POSIX**     | `mkPosixShellModule`          | ksh, mksh       |
+| **Non-POSIX** | `mkShellModule` + `envBridge` | rc, elvish      |
 
 Use `mkPosixShellModule` for a shell that does all of these:
 
@@ -15,7 +15,7 @@ Use `mkPosixShellModule` for a shell that does all of these:
 - It reads the file in `$ENV` as an interactive shell.
 - It accepts POSIX `sh` syntax for `export`, `alias`, `case`, `[ ]` and `return` in a sourced file.
 
-Do not use `mkPosixShellModule` for bash or zsh. NixOS, nix-darwin and home-manager have their own modules for these shells.
+Do not use sh.nix for bash, zsh or fish. NixOS, nix-darwin and home-manager have their own modules for these shells.
 
 ---
 
@@ -34,10 +34,10 @@ shnixLib.mkPosixShellModule {
 
 The modules have the POSIX options in the [README](../README.md#options). They also do these steps:
 
-- They write `/etc/myshrc` (NixOS, nix-darwin), `~/.myshrc` and `~/.profile` (home-manager).
-- They register the shell in the `/etc/profile` guard chain.
+- They write `/etc/profile` and `/etc/myshrc` (NixOS, nix-darwin), and `~/.myshrc` and `~/.profile` (home-manager). When home-manager `programs.bash` is enabled, they add the login block to `programs.bash.profileExtra` and do not write `~/.profile`.
+- They register the shell in the `/etc/profile` guard chain. The guard exports `ENV=/etc/myshrc`.
 - They bridge `environment.shellAliases` or `home.shellAliases` to `programs.mysh.shellAliases`.
-- They bridge `environment.interactiveShellInit` to `programs.mysh.interactiveShellInit`.
+- They merge `environment.interactiveShellInit` into `programs.mysh.interactiveShellInit`.
 
 ### Guard
 
@@ -51,7 +51,7 @@ known = {
 };
 ```
 
-A name that is not in `known` gets `[ -n "${<NAME>_VERSION:-}" ]`. If the shell does not set this variable, add an entry to `known`. Without a correct guard, `/etc/profile` does not source the rc file of the shell.
+A name that is not in `known` gets `[ -n "${<NAME>_VERSION:-}" ]`. If the shell does not set this variable, add an entry to `known`. Without a correct guard, `/etc/profile` does not set `ENV` for the shell, and the shell does not read its rc file.
 
 ### Shell-specific options
 
@@ -88,7 +88,7 @@ in
 }
 ```
 
-Import the result of `mkPosixShellModule` from a separate file. If you call it inline in `flake.nix`, the module system cannot identify the modules, and an import of two modules gives "option already declared" errors.
+Import the result of `mkPosixShellModule` from a separate file. If you call it in `flake.nix`, the module system cannot identify the modules. A configuration that imports two modules of the shell then gives "option already declared" errors.
 
 ---
 
@@ -149,14 +149,14 @@ extraHmOptions = { lib, ... }: {
 
 ### Config
 
-Each config function receives `{ config, lib, pkgs, cfg }`. `cfg` is `config.programs.<name>`. Set bridged values with `lib.mkDefault`, so that a value in `programs.<name>` replaces them:
+Each config function receives `{ config, lib, pkgs, cfg }`. `cfg` is `config.programs.<name>`. Set each bridged entry with `lib.mkDefault`. Then an entry in `programs.<name>` replaces the bridged entry with the same name, and the other bridged entries stay:
 
 ```nix
 nixosConfig = { config, lib, cfg, ... }:
   let env = envBridge.nixos { inherit config; }; in
   {
     environment.shells = [ "${cfg.package}/bin/rc" ];
-    programs.rc.shellAliases = lib.mkDefault env.shellAliases;
+    programs.rc.shellAliases = lib.mapAttrs (_: lib.mkDefault) env.shellAliases;
   };
 ```
 
@@ -226,7 +226,7 @@ nix flake check
 
 1. Use `envBridge` for all global environment data.
 2. Do not copy POSIX code into the configuration of a non-POSIX shell.
-3. Set bridged values with `lib.mkDefault`.
+3. Set each bridged entry with `lib.mkDefault`.
 4. Omit empty sections in generated files.
 5. Keep `mkShellModule` free of shell syntax. Put POSIX logic in `lib/posix/`.
 

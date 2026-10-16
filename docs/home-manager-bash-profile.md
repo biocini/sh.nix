@@ -214,7 +214,7 @@ sh.nix has no equivalent of `bashrcExtra`.
 
 ### `~/.profile`
 
-`~/.profile` is read by every POSIX login shell. sh.nix puts the login code of a shell in a block behind the guard of that shell:
+Each POSIX login shell reads `~/.profile`. sh.nix puts the login code of a shell in a block behind the guard of that shell:
 
 ```sh
 # ~/.profile: DO NOT EDIT -- this file has been generated automatically.

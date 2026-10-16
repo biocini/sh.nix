@@ -198,9 +198,9 @@ At activation time:
 
 ### Interactive Guard Pattern
 
-nix-darwin bash places the interactive guard **after** the `setEnvironment` bootstrap and **before** any interactive content. The guard is `[[ $- != *i* ]] && return` which tests the shell options for the `i` (interactive) flag. This ensures non-interactive shells exit early from `/etc/bashrc` after the environment bootstrap but before any interactive setup.
+The guard is `[[ $- != *i* ]] && return`. It comes after the `setEnvironment` bootstrap and before the interactive content. A non-interactive shell stops at the guard.
 
-This same pattern must be reproduced for any POSIX shell's system-wide rc file (`/etc/kshrc`, `/etc/yashrc`, etc.) to prevent non-interactive login shells from running interactive setup.
+Each system rc file of a POSIX shell must use the same pattern. Then a non-interactive login shell does not run the interactive setup. The sh.nix system rc file (`/etc/kshrc`, or `/etc/<etcRcPath>` for a shell made with `mkPosixShellModule`) uses `case $- in *i*`.
 
 ## 7. Key Differences from NixOS
 
@@ -219,13 +219,13 @@ This same pattern must be reproduced for any POSIX shell's system-wide rc file (
 
 **Source:** `lib/posix/profile-darwin.nix`
 
-When a POSIX shell module of sh.nix is enabled, sh.nix replaces the stock macOS `/etc/profile`. The stock file does not source `setEnvironment`, does not set `__ETC_PROFILE_DONE`, and does not dispatch to the rc files of other POSIX shells.
+When a POSIX shell module of sh.nix is enabled, sh.nix replaces the stock macOS `/etc/profile`. The stock file does not source `setEnvironment`, does not set `__ETC_PROFILE_DONE`, and does not set `ENV` for other POSIX shells.
 
 The generated file does these steps in sequence:
 
 1. It sources `setEnvironment`, if `__NIX_DARWIN_SET_ENVIRONMENT_DONE` is not set.
 2. It runs `/usr/libexec/path_helper` and adds to the end of `PATH` only the directories that are not already in `PATH`. `setEnvironment` sets a complete `PATH`, so the Nix directories stay first.
 3. It runs `environment.shellInit`, `environment.loginShellInit` and `/etc/profile.local`.
-4. It runs the guard chain. bash sources `/etc/bashrc`, the same as the stock file. Each other registered shell exports `ENV` and sources its rc file.
+4. It runs the guard chain. bash sources `/etc/bashrc`, the same as the stock file. Each other registered shell exports `ENV` and runs its `loginShellInit`. An interactive shell reads the file in `$ENV` after `~/.profile`.
 
 The module declares `environment.etc.profile.knownSha256Hashes` with the hash of the stock macOS `/etc/profile`. macOS restores the stock file on system updates. nix-darwin activation then moves it to `/etc/profile.before-nix-darwin` and does not stop.
